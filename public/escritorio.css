@@ -1,0 +1,210 @@
+:root {
+  --bg: #0f1720;
+  --bg-piso: #1c2b3a;
+  --linha-piso: #24384a;
+  --texto: #eef3f7;
+  --texto-fraco: #93a4b5;
+  --acento: #ffcc33;
+  --painel-bg: #16212c;
+  --borda: #2a3d4f;
+  --verde: #3ecf8e;
+  --vermelho: #ef5b5b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--texto);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.topo {
+  padding: 18px 24px 10px;
+  text-align: center;
+}
+.topo h1 { margin: 0; font-size: 26px; letter-spacing: 0.5px; }
+.subtitulo { color: var(--texto-fraco); margin: 4px 0 0; font-size: 14px; }
+.topo-status { margin-top: 6px; font-size: 12px; color: var(--vermelho); min-height: 16px; }
+
+.layout {
+  display: flex;
+  gap: 16px;
+  padding: 0 16px;
+  align-items: flex-start;
+}
+
+.escritorio-wrap { flex: 1; min-width: 0; }
+
+.escritorio {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 640px;
+  background:
+    repeating-linear-gradient(0deg, transparent, transparent 39px, var(--linha-piso) 40px),
+    repeating-linear-gradient(90deg, transparent, transparent 39px, var(--linha-piso) 40px),
+    var(--bg-piso);
+  border: 2px solid var(--borda);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mesa {
+  position: absolute;
+  width: 84px;
+  height: 64px;
+  transform: translate(-50%, -50%);
+  background: var(--painel-bg);
+  border: 1px solid var(--borda);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding-bottom: 4px;
+  cursor: default;
+}
+.mesa .rotulo {
+  font-size: 10px;
+  color: var(--texto-fraco);
+  text-align: center;
+  line-height: 1.15;
+  padding: 0 2px;
+}
+.mesa .icone-mesa { font-size: 18px; margin-bottom: 2px; }
+
+.mesa-reuniao, .cantinho-motivacional {
+  position: absolute;
+  border: 1px dashed var(--acento);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--acento);
+  font-size: 11px;
+  text-align: center;
+  padding: 6px;
+}
+.mesa-reuniao { width: 120px; height: 120px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 12px; }
+.cantinho-motivacional { width: 90px; height: 60px; left: 10%; top: 84%; transform: translate(-50%, -50%); border-radius: 12px; border-color: #ffd76b; color: #ffd76b; }
+
+.bonequinho {
+  position: absolute;
+  width: 52px;
+  height: 66px;
+  transform: translate(-50%, -50%);
+  transition: left 1.8s ease-in-out, top 1.8s ease-in-out;
+  cursor: pointer;
+  z-index: 5;
+  text-align: center;
+}
+.bonequinho .avatar {
+  width: 48px;
+  height: 58px;
+  border-radius: 10px;
+  border: 2px solid rgba(255,255,255,0.3);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.45);
+  background-size: 160%;
+  background-position: center 8%;
+  background-repeat: no-repeat;
+  background-color: #dfe4e8;
+}
+.bonequinho .nome-tag {
+  font-size: 9px;
+  color: var(--texto-fraco);
+  white-space: nowrap;
+  margin-top: 2px;
+}
+.bonequinho.andando .avatar { animation: balanco 0.5s infinite ease-in-out; }
+@keyframes balanco {
+  0%, 100% { transform: rotate(-6deg) translateY(0); }
+  50% { transform: rotate(6deg) translateY(-1px); }
+}
+.bonequinho .balao {
+  position: absolute;
+  bottom: 46px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  color: #111;
+  font-size: 10px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  max-width: 160px;
+  white-space: normal;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+  display: none;
+  z-index: 10;
+}
+.bonequinho.falando .balao { display: block; }
+
+.painel-lateral {
+  width: 380px;
+  max-height: 640px;
+  overflow-y: auto;
+  background: var(--painel-bg);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 16px;
+  position: relative;
+}
+.painel-lateral .fechar {
+  position: absolute; top: 8px; right: 8px;
+  background: none; border: none; color: var(--texto-fraco); font-size: 16px; cursor: pointer;
+}
+.painel-lateral h2 { margin: 0 0 4px; font-size: 18px; }
+.painel-lateral .badge { display: inline-block; font-size: 11px; background: var(--borda); color: var(--texto-fraco); padding: 2px 8px; border-radius: 10px; margin: 2px 4px 8px 0; }
+.painel-lateral label { display: block; font-size: 12px; color: var(--texto-fraco); margin: 10px 0 4px; }
+.painel-lateral textarea, .painel-lateral input[type=text] {
+  width: 100%; background: var(--bg); color: var(--texto); border: 1px solid var(--borda);
+  border-radius: 6px; padding: 8px; font-size: 12px; font-family: inherit;
+}
+.painel-lateral textarea { min-height: 90px; resize: vertical; }
+.painel-lateral button.acao {
+  margin-top: 8px; background: var(--acento); color: #221900; border: none;
+  border-radius: 6px; padding: 8px 14px; font-weight: 600; cursor: pointer; font-size: 13px;
+}
+.painel-lateral button.acao:hover { filter: brightness(1.08); }
+.painel-lateral pre.saida {
+  background: var(--bg); border: 1px solid var(--borda); border-radius: 6px; padding: 8px;
+  font-size: 11px; white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow-y: auto;
+}
+.painel-lateral .mailbox-item { font-size: 11px; border-bottom: 1px solid var(--borda); padding: 6px 0; }
+.painel-lateral .mailbox-item b { color: var(--acento); }
+
+.reuniao-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.reuniao-bar input {
+  background: var(--painel-bg); color: var(--texto); border: 1px solid var(--borda);
+  border-radius: 6px; padding: 8px; font-size: 13px; flex: 1; min-width: 180px;
+}
+.reuniao-bar button {
+  background: var(--verde); color: #06210f; border: none; border-radius: 6px;
+  padding: 8px 16px; font-weight: 700; cursor: pointer;
+}
+#reuniaoStatus { font-size: 12px; color: var(--texto-fraco); }
+
+.transcricao {
+  margin: 0 16px 24px;
+  background: var(--painel-bg);
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.transcricao-topo { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.transcricao-topo button { background: none; border: none; color: var(--texto-fraco); cursor: pointer; font-size: 14px; }
+.fala-etapa { border-left: 3px solid var(--acento); padding: 6px 10px; margin-bottom: 10px; font-size: 13px; }
+.fala-etapa .quem { font-weight: 700; color: var(--acento); margin-bottom: 2px; }
+.fala-etapa pre { font-size: 11px; white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; color: var(--texto-fraco); }
+
+@media (max-width: 860px) {
+  .layout { flex-direction: column; }
+  .painel-lateral { width: 100%; }
+}
