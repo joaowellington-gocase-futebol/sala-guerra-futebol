@@ -189,10 +189,14 @@ export default {
         for (const ag of cadeia) {
           etapaN += 1;
           const fonte = ag.modoTexto ? null : await buscarFonteAutomatica(env, ag.chave);
-          const entradaBase = fonte ? JSON.stringify(fonte.dados, null, 2) : ag.exemplo;
+          // Agente sem fonte automática (ex.: redator) não tem dado real próprio nesta
+          // etapa — usar o exemplo estático aqui faria o modelo escrever em cima de um
+          // lançamento inventado em vez do que a mesa decidiu de verdade. Nesse caso o
+          // CONTEXTO DA REUNIÃO (a saída real dos agentes anteriores) é a entrada.
+          const entradaBase = fonte ? JSON.stringify(fonte.dados, null, 2) : contexto;
           const pendentes = await entregarRecados(env, sessao, ag.chave);
           const corpo = ag.user(entradaBase) + formatarRecadosParaPrompt(pendentes) +
-            `\n\nCONTEXTO DA REUNIÃO ATÉ AGORA:\n${contexto}`;
+            (fonte ? `\n\nCONTEXTO DA REUNIÃO ATÉ AGORA:\n${contexto}` : '');
 
           const r = await chamarAgente(env, ag.system, corpo, undefined, ag.temperatura);
           const saiu = r.ok ? ((r.dados as any)?.recados_para || []) : [];
