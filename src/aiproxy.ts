@@ -11,7 +11,7 @@ export interface Env {
   AI_PROXY_URL?: string;
   AI_MODEL?: string;
   METABASE_API_KEY?: string;
-  HUB_SERVICE_KEY?: string;
+  GODEPLOY_API_KEY?: string;
 }
 
 export interface Resultado {
