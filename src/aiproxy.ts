@@ -12,6 +12,14 @@ export interface Env {
   AI_MODEL?: string;
   METABASE_API_KEY?: string;
   GODEPLOY_API_KEY?: string;
+  GODEPLOY_CRON_KEY?: string;
+  WEBHOOK_URL?: string;
+  RESEND_API_KEY?: string;
+  EMAIL_DE?: string;
+  // Destino do recado diário do Torcedor. Ficam como secret além da config
+  // porque dá pra deixar tudo ligado sem precisar abrir a tela.
+  EMAIL_PARA?: string;
+  VOZAO_CHAT_URL?: string;
 }
 
 export interface Resultado {

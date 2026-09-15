@@ -1,6 +1,6 @@
 // A mesa: como os agentes "conversam entre si usando o AI Proxy".
 // Extraído do padrão embutido em server.ts da Fábrica de Térmicos
-// (app/src/server.ts:81-89,278-335) para uso comum pelos 9 agentes daqui.
+// (app/src/server.ts:81-89,278-335) para uso comum pelos 10 agentes daqui.
 //
 // Um agente devolve `recados_para: [{para, assunto, pedido}]` no JSON da sua
 // resposta. O recado fica gravado com a `sessao` (o tema/lançamento em

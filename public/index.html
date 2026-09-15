@@ -4,49 +4,61 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Sala de Guerra do Futebol</title>
-<link rel="stylesheet" href="/escritorio.css" />
+<link rel="icon" type="image/svg+xml" href="/squad-patch.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/sala.css" />
 </head>
 <body>
 
-<header class="topo">
-  <h1>⚽ Sala de Guerra do Futebol</h1>
-  <p class="subtitulo">A agência interna de futebol da Gocase — 9 agentes de IA, uma mesa só.</p>
-  <div class="topo-status" id="statusToken"></div>
+<header class="hud">
+  <div class="titulo">
+    <img class="brasao" src="/squad-patch.svg" alt="Brasão do squad de futebol" />
+    <h1>SALA DE GUERRA DO FUTEBOL</h1>
+    <img class="brasao" src="/squad-patch.svg" alt="" aria-hidden="true" />
+  </div>
+  <div class="hud-linha">
+    <span id="contagem">próxima reunião automática em —</span>
+    <span class="sep">·</span>
+    <span>Téo · Rafa · Nina · Caio · Val — sua equipe de 5</span>
+  </div>
+  <div id="avisos" class="avisos"></div>
 </header>
 
-<main class="layout">
-
-  <section class="escritorio-wrap">
-    <div class="escritorio" id="escritorio">
-      <!-- mesas e bonequinhos são criados por escritorio.js -->
-      <div class="mesa-reuniao" id="mesaReuniao"><span>Mesa de Reunião</span></div>
-      <div class="cantinho-motivacional" id="cantinho"><span>Cantinho do Motivacional</span></div>
+<div class="sala-wrap">
+  <div class="moldura">
+    <div class="tela">
+      <canvas id="sala"></canvas>
+      <div id="camadaUi"></div>
+      <div class="scanlines" aria-hidden="true"></div>
     </div>
-  </section>
-
-  <section class="painel-lateral" id="painelLateral" hidden>
-    <button class="fechar" id="fecharPainel">✕</button>
-    <div id="painelConteudo"></div>
-  </section>
-
-</main>
-
-<section class="reuniao-bar">
-  <input id="temaReuniao" type="text" placeholder="Tema da reunião (ex.: Clássico Ceará x Fortaleza, ou um lançamento)" />
-  <input id="sessaoReuniao" type="text" placeholder="sessão (ex.: ceara-2027-home)" style="max-width:220px" />
-  <button id="btnConvocar">📣 Convocar reunião</button>
-  <span id="reuniaoStatus"></span>
-</section>
-
-<section class="transcricao" id="transcricao" hidden>
-  <div class="transcricao-topo">
-    <strong>Transcrição da reunião</strong>
-    <button id="fecharTranscricao">✕</button>
+    <div id="legenda" class="legenda"></div>
   </div>
-  <div id="transcricaoConteudo"></div>
-</section>
+</div>
 
-<script src="/escritorio.js"></script>
-<script src="/mesa-de-trabalho.js"></script>
+<div class="faixa-ata" id="faixaAta"></div>
+
+<div class="barra">
+  <input id="campoTema" type="text" placeholder="Tema da reunião (vazio = a mesa escolhe a pauta pelo dado da hora)" />
+  <input id="campoSessao" type="text" class="curto" placeholder="sessão (opcional)" />
+  <label class="check"><input type="checkbox" id="mandarWebhook" /> mandar no webhook</label>
+  <button id="btnConvocar" class="pixel">📣 Convocar reunião</button>
+  <button id="btnDirecao" class="pixel">🎯 Coordenar</button>
+  <button id="btnAutomatica" class="pixel secundaria">🤖 Rodar a automática agora</button>
+  <button id="btnAtas" class="pixel secundaria">📜 Reuniões</button>
+  <button id="btnMemoria" class="pixel secundaria">🧠 Memória</button>
+  <button id="btnBoletim" class="pixel secundaria">📊 Boletim</button>
+  <button id="btnCorredor" class="pixel secundaria">☕ Corredor</button>
+  <button id="btnConfig" class="pixel secundaria">⚙ Config</button>
+  <span id="statusBarra" class="status"></span>
+</div>
+
+<aside id="painel" class="painel">
+  <button class="fechar" id="fecharPainel">✕</button>
+  <div id="painelConteudo"></div>
+</aside>
+
+<script type="module" src="/painel.js"></script>
 </body>
 </html>
