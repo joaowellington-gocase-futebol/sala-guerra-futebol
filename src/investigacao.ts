@@ -27,7 +27,7 @@
 // — senão a mesa vira um clube de gente que concorda consigo mesma.
 
 import type { Env } from './aiproxy';
-import { chamarAgente } from './aiproxy';
+import { chamarAgente, chamarAgenteTexto } from './aiproxy';
 import { executarConsulta, formatarResultado, DICIONARIO } from './consulta';
 import { PESSOAS, formatarPessoa } from './pessoas';
 
@@ -119,8 +119,55 @@ async function proporPerguntas(
 
 // ── 2. O teste: a Rafa escreve o SQL, roda, e lê o que voltou ────────────
 
-async function escreverSql(env: Env, pergunta: string, hipotese: string, erroAnterior?: string, sqlAnterior?: string): Promise<string> {
-  const r = await chamarAgente(
+/**
+ * Tira o SQL de qualquer formato em que o modelo tenha resolvido responder.
+ *
+ * POR QUE ISTO EXISTE (João, 16/09/2026: "3 de 3 consultas não rodaram — não
+ * consegui escrever a consulta"): a versão anterior pedia o SQL DENTRO de um
+ * JSON (`{"sql":"..."}`). SQL é multilinha por natureza; quando o modelo emite
+ * a quebra de linha de verdade em vez de \n, o JSON fica inválido, o cliente
+ * cai no fallback de "resposta crua" e o campo `sql` chega vazio. Resultado: a
+ * consulta nunca era escrita, nenhuma hipótese era testada, a mesa nunca tinha
+ * número — e então era obrigada a dizer que não tinha o que recomendar. Todas
+ * as atas vazias de dias seguidos passavam por aqui.
+ *
+ * Agora o SQL é pedido em texto puro, e este extrator ainda cobre as formas
+ * em que ele costuma vir embrulhado.
+ */
+export function extrairSql(bruto: unknown): string {
+  const texto = typeof bruto === 'string'
+    ? bruto
+    : String((bruto as any)?.sql || (bruto as any)?.texto || (bruto as any)?.resposta_crua || '');
+  if (!texto.trim()) return '';
+
+  // ```sql ... ```
+  const cerca = texto.match(/```(?:sql)?\s*([\s\S]*?)```/i);
+  if (cerca?.[1]?.trim()) return cerca[1].trim();
+
+  // {"sql": "..."} que não deu pra parsear
+  const campo = texto.match(/"sql"\s*:\s*"([\s\S]*?)"\s*[,}]/);
+  if (campo?.[1]?.trim()) {
+    return campo[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, ' ').trim();
+  }
+
+  // O texto já é a consulta: corta o que vier antes do SELECT/WITH.
+  const inicio = texto.search(/\b(select|with)\b/i);
+  if (inicio >= 0) return texto.slice(inicio).trim();
+
+  return '';
+}
+
+interface SqlEscrito { sql: string; erro?: string }
+
+/**
+ * A Rafa escreve a consulta. Em TEXTO, não em JSON — ver extrairSql acima.
+ * Quando falha, devolve o motivo de verdade, porque "não consegui escrever a
+ * consulta" sem causa foi exatamente o que escondeu este bug por dias.
+ */
+async function escreverSql(
+  env: Env, pergunta: string, hipotese: string, erroAnterior?: string, sqlAnterior?: string,
+): Promise<SqlEscrito> {
+  const r = await chamarAgenteTexto(
     env,
     formatarPessoa('analista') +
     '\n\n━━ O QUE VOCÊ ESTÁ FAZENDO AGORA ━━\n' +
@@ -131,30 +178,46 @@ async function escreverSql(env: Env, pergunta: string, hipotese: string, erroAnt
       ? `\n\n⚠ VOCÊ JÁ TENTOU E FALHOU. Sua consulta anterior foi:\n${sqlAnterior}\n\nO banco respondeu: ${erroAnterior}\n` +
         'Conserte. Se o erro for de coluna que não existe, use só as colunas do dicionário acima.'
       : '') +
-    '\n\nResponda APENAS {"sql":"...","o_que_espero_ver":"..."}',
-    `Pergunta: ${pergunta}\nHipótese da mesa: ${hipotese}`,
-    undefined,
+    '\n\n━━ COMO RESPONDER ━━\n' +
+    'Devolva SOMENTE a consulta SQL, em texto puro. Nada de JSON, nada de explicação, nada de comentário, ' +
+    'nada de crase. A primeira palavra da sua resposta tem que ser SELECT ou WITH, e a última tem que ser o ' +
+    'fim da consulta. Pode quebrar linha à vontade — é SQL, é pra ser legível.',
+    [{ role: 'user', content: `Pergunta: ${pergunta}\nHipótese da mesa: ${hipotese}` }],
     0.25,
   );
-  return r.ok ? String((r.dados as any)?.sql || '') : '';
+
+  if (!r.ok) return { sql: '', erro: `o modelo não respondeu (${r.erro})` };
+  const sql = extrairSql(r.dados);
+  if (!sql) {
+    const amostra = String((r.dados as any)?.texto || '').slice(0, 160).replace(/\s+/g, ' ');
+    return { sql: '', erro: `o modelo respondeu sem consulta utilizável${amostra ? ` — começava com: "${amostra}"` : ''}` };
+  }
+  return { sql };
 }
 
 async function testarPergunta(
   env: Env, p: { pergunta: string; hipotese: string },
 ): Promise<Teste> {
-  let sql = await escreverSql(env, p.pergunta, p.hipotese);
-  let consulta = sql ? await executarConsulta(env, sql) : { ok: false, erro: 'não consegui escrever a consulta', colunas: [], linhas: [], linhasRetornadas: 0 };
+  const primeira = await escreverSql(env, p.pergunta, p.hipotese);
+  let sql = primeira.sql;
+  let consulta = sql
+    ? await executarConsulta(env, sql)
+    : { ok: false, erro: primeira.erro || 'não consegui escrever a consulta', colunas: [], linhas: [], linhasRetornadas: 0 };
   let tentativas = 1;
 
-  // Uma segunda chance com o erro na mão — é o que uma pessoa faria, e é onde
-  // mora boa parte do "pensar de verdade": ler o erro e corrigir.
-  if (!consulta.ok) {
-    const sql2 = await escreverSql(env, p.pergunta, p.hipotese, consulta.erro, sql);
-    if (sql2) {
-      sql = sql2;
-      consulta = await executarConsulta(env, sql2);
-      tentativas = 2;
+  // Duas chances extras com o erro na mão — é o que uma pessoa faria, e é onde
+  // mora boa parte do "pensar de verdade": ler o erro e corrigir. Eram duas
+  // tentativas no total; virou três porque a rodada inteira depende disto, e
+  // uma reunião sem número nenhum não vale o que custa.
+  for (let n = 0; n < 2 && !consulta.ok; n++) {
+    const nova = await escreverSql(env, p.pergunta, p.hipotese, consulta.erro, sql);
+    tentativas += 1;
+    if (!nova.sql) {
+      consulta = { ok: false, erro: nova.erro || consulta.erro, colunas: [], linhas: [], linhasRetornadas: 0 };
+      continue;
     }
+    sql = nova.sql;
+    consulta = await executarConsulta(env, sql);
   }
 
   if (!consulta.ok) {

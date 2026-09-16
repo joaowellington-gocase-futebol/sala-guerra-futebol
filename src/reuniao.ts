@@ -533,8 +533,11 @@ export async function rodarReuniao(
   const testesQueFalharam = inv.testes.filter((t) => t.veredito === 'falhou');
   const cegaPorFalha = inv.testes.length > 0 && testesQueFalharam.length === inv.testes.length;
   const motivoDaCegueira = cegaPorFalha
-    ? `A mesa ficou sem número nesta rodada: ${testesQueFalharam.length} de ${inv.testes.length} consultas não rodaram. ` +
-      `Erro técnico: ${testesQueFalharam.map((t) => t.o_que_o_numero_diz).join(' | ').slice(0, 600)}`
+    ? `A INVESTIGAÇÃO desta rodada não rodou: ${testesQueFalharam.length} de ${inv.testes.length} consultas falharam. ` +
+      `Erro técnico: ${testesQueFalharam.map((t) => t.o_que_o_numero_diz).join(' | ').slice(0, 500)}. ` +
+      `ISSO NÃO DEIXA A MESA SEM NÚMERO: a venda da semana e o cardápio de clubes e produtos continuam na sua ` +
+      `frente, e é com eles que você decide hoje. Diga que a investigação falhou, diga o erro, e siga usando o ` +
+      `número que você TEM — parar a casa por causa de uma consulta que não escreveu é a pior das saídas.`
     : '';
 
   const achado =
@@ -620,6 +623,12 @@ export async function rodarReuniao(
     ...mundo.noticias.concorrencia.slice(0, 3).map((i) => `a concorrência lançou: ${i.titulo.slice(0, 110)}`),
     ...mundo.noticias.uniformes.slice(0, 2).map((i) => `camisa nova: ${i.titulo.slice(0, 110)}`),
     ...cardapio.clubes.slice(0, 3).map((c) => `${c.clube} vendeu ${c.un_30d} un em 30 dias`),
+    // A venda que a Rafa recebeu por fonte própria. Entra aqui de propósito:
+    // mesmo quando a investigação falha inteira, estes são números de produto
+    // com nome, suficientes pra sustentar uma recomendação.
+    ...(((fontes['analista']?.dados as { acelerando?: { produto: string; un_7d: number; variacao_un_pct: number | null }[] })?.acelerando ?? [])
+      .slice(0, 3)
+      .map((p) => `${p.produto}: ${p.un_7d} un na semana${p.variacao_un_pct === null ? '' : `, ${p.variacao_un_pct > 0 ? '+' : ''}${p.variacao_un_pct}%`}`)),
   ];
 
   const fecho = await fecharComDirecao(env, {
