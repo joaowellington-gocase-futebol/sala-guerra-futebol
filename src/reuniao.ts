@@ -37,12 +37,11 @@ import {
   impressaoDigital, ultimasAtas, formatarNaoRepita, ultimasFalasDele, formatarNaoSeRepita,
   manchetesNovas, marcarManchetesVistas, pendenciasAbertas,
 } from './historico';
-import { buscarPainelTendencias } from './fontes/radarFutebol';
-import { buscarReferenciasAcervo } from './fontes/acervoFutebol';
 import { buscarPedidosFutebolTravados } from './fontes/pedidosTravados';
 import { buscarManchetesReais } from './fontes/noticiasFutebol';
 import { buscarTendenciasGoogle } from './fontes/tendenciasGoogle';
 import { buscarVendasFutebol } from './fontes/vendasFutebol';
+import { buscarMundo, dossieDe, resumoDoMundo, type Mundo } from './web/mundo';
 import { pautasVindasDoCorredor, marcarPautasAproveitadas } from './corredor';
 import { PESSOAS } from './pessoas';
 import { investigarMercado } from './investigacao';
@@ -121,34 +120,42 @@ export interface FonteAutomatica {
 export async function buscarFonteAutomatica(
   env: Env,
   chave: string,
+  mundo?: Mundo,
 ): Promise<FonteAutomatica | null> {
+  // O dossiê de internet aberta é o que o agente vê primeiro. Cada um recebe o
+  // recorte dele (ver src/web/mundo.ts) — e não o mesmo JSON pra todos, que era
+  // o que fazia a mesa concordar consigo mesma.
+  const daWeb = mundo ? dossieDe(chave, mundo) : '';
+
   switch (chave) {
     case 'olheiro': {
       // Três fontes com ritmos diferentes, e é essa diferença que faz o
       // olheiro ter o que dizer: o calendário do radar (muda ~1x/dia), o
       // Google Trends (muda várias vezes ao dia) e a notícia por RSS, já
       // filtrada pro que ainda não foi reportado.
-      const [r, g, n] = await Promise.all([
-        buscarPainelTendencias(env),
+      const [g, n] = await Promise.all([
         buscarTendenciasGoogle(env),
         buscarManchetesReais(env),
       ]);
       const { novas, jaVistas } = await manchetesNovas(env, n.manchetes);
       return {
         dados: {
-          calendario: (r.painel as any)?.calendario ?? null,
-          painel: r.painel,
+          de_onde_veio: 'internet aberta: globoesporte (calendário), Wikipédia (procura), Google Notícias, ge.globo (RSS), Google Trends',
+          dossie_da_internet: daWeb,
           google_trends_de_futebol: g.ok ? g.termos.filter((t) => t.de_futebol) : [],
-          google_trends_br: g.ok ? g.termos : [],
-          manchetes: novas,
+          manchetes_ge: novas,
           manchetes_ja_reportadas: jaVistas,
         },
         fontesComFalha: [
-          ...r.fontes_com_falha,
+          ...(mundo?.falhas ?? []),
           ...(g.ok ? [] : [`google_trends: ${g.erro}`]),
-          ...(n.ok ? [] : [`noticias: ${n.erro}`]),
+          ...(n.ok ? [] : [`ge.globo: ${n.erro}`]),
         ],
-        bruto: { manchetes: n.manchetes.map((m) => m.link).sort(), trends: g.ok ? g.termos.map((t) => t.termo).sort() : [] },
+        bruto: {
+          manchetes: n.manchetes.map((m) => m.link).sort(),
+          trends: g.ok ? g.termos.map((t) => t.termo).sort() : [],
+          jogos: (mundo?.calendario.proximos ?? []).map((j) => `${j.mandante}x${j.visitante}${j.data}`).sort(),
+        },
       };
     }
     case 'analista': {
@@ -158,9 +165,21 @@ export async function buscarFonteAutomatica(
       const v = await buscarVendasFutebol(env);
       return { dados: v as unknown as Record<string, unknown>, fontesComFalha: v.ok ? [] : [v.erro || 'falha desconhecida'] };
     }
-    case 'criacao': {
-      const r = await buscarReferenciasAcervo(env);
-      return { dados: { itens_acervo: r.itens }, fontesComFalha: r.fontes_com_falha };
+    case 'criacao':
+    case 'marketeiro': {
+      // Antes a Nina lia um acervo pré-catalogado por outro app e o Caio não
+      // tinha fonte externa nenhuma. Agora os dois vão à internet, cada um na
+      // dele: ela em uniforme, design e cultura pop; ele em concorrência.
+      if (!daWeb) return null;
+      return {
+        dados: {
+          de_onde_veio: chave === 'criacao'
+            ? 'internet aberta: Footy Headlines, Hypebeast, Dezeen e Wikipédia (cultura pop em alta)'
+            : 'internet aberta: Google Notícias (licenciamento e lançamentos) e Wikipédia (procura)',
+          dossie_da_internet: daWeb,
+        },
+        fontesComFalha: mundo?.falhas ?? [],
+      };
     }
     case 'produtor': {
       const [fila, pendentes] = await Promise.all([
@@ -340,17 +359,26 @@ export async function rodarReuniao(
   // O cardápio (o que a casa tem na mão) e o placar (o que deu a recomendação
   // anterior) vêm antes de qualquer chamada de IA: são eles que impedem a mesa
   // de falar no vácuo, que era a queixa do João em 16/09.
+  // O mundo primeiro: ele traz o calendário, que o cardápio reaproveita em vez
+  // de varrer o globoesporte de novo.
+  const mundo = await buscarMundo();
   const [direcao, cardapio, placarBruto] = await Promise.all([
     direcaoAberta(env),
-    montarCardapio(env),
+    montarCardapio(env, mundo.calendario),
     medirRecomendacoesAnteriores(env),
   ]);
   const placar = formatarPlacar(placarBruto);
   const fontes: Record<string, FonteAutomatica | null> = {};
-  await Promise.all(COLETA.map(async (chave) => { fontes[chave] = await buscarFonteAutomatica(env, chave); }));
+  await Promise.all(COLETA.map(async (chave) => { fontes[chave] = await buscarFonteAutomatica(env, chave, mundo); }));
   const impressao = impressaoDigital({
     fontes: Object.fromEntries(Object.entries(fontes).map(([k, v]) => [k, v?.bruto ?? v?.dados ?? null])),
     direcao: impressaoDaDirecao(direcao),
+    // O mundo entra pelo que ele tem de mais estável: o que a concorrência
+    // lançou e que jogos vêm. Se nada disso mudou, não houve dia novo lá fora.
+    mundo: [
+      ...mundo.noticias.concorrencia.map((i) => i.titulo),
+      ...mundo.calendario.proximos.map((j) => `${j.mandante}x${j.visitante}`),
+    ].sort().join('|'),
   });
 
   const anteriores = await ultimasAtas(env, 6);
@@ -444,7 +472,8 @@ export async function rodarReuniao(
   }
 
   // Tudo que a mesa tem na mão antes de começar a pensar.
-  const dossie = contextoDe(coleta) +
+  const dossie = `O MUNDO LÁ FORA HOJE (internet aberta, consultada agora):\n${resumoDoMundo(mundo)}\n\n` +
+    contextoDe(coleta) +
     (vozesDaCasa ? `\n\n${vozesDaCasa}` : '') +
     `\n\n${formatarCardapio(cardapio)}` +
     `\n\n${placar}`;
@@ -526,9 +555,10 @@ export async function rodarReuniao(
         criacao: 'Você lê isto como criação: o que o mercado está dizendo sobre ESTÉTICA e sobre o que o torcedor quer vestir — e, por causa disso, que direção criativa você defende agora? Concreta: clube, tratamento, produto.',
         marketeiro: 'Você lê isto como posicionamento: o que isso diz sobre onde a Gocase está e onde ela deveria estar neste mercado — e qual aposta você faria com isso?',
       };
+      const meuDossie = dossieDe(chave, mundo);
       return falar(env, ag, {
         sessao, rodada: 'leitura', ordem: ++ordem,
-        entradaBase: achado,
+        entradaBase: achado + (meuDossie ? `\n\n━━ O QUE SÓ VOCÊ ESTÁ VENDO HOJE ━━\n${meuDossie}` : ''),
         contexto: dossie,
         direcao,
         instrucaoExtra:
@@ -597,7 +627,7 @@ export async function rodarReuniao(
 
   // ── 7. A ROTINA — a Val cobra o que ficou parado ────────────────────────
   const produtor = acharAgente('produtor')!;
-  const fonteProdutor = await buscarFonteAutomatica(env, 'produtor');
+  const fonteProdutor = await buscarFonteAutomatica(env, 'produtor', mundo);
   const etapaProdutor = await falar(env, produtor, {
     sessao, rodada: 'rotina', ordem: ++ordem,
     entradaBase: JSON.stringify(fonteProdutor?.dados || {}, null, 2),

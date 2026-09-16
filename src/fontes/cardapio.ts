@@ -18,7 +18,7 @@
 
 import type { Env } from '../aiproxy';
 import { executarConsulta, formatarResultado, type Consulta } from '../consulta';
-import { buscarPainelTendencias } from './radarFutebol';
+import { buscarCalendario, type Calendario } from '../web/calendario';
 
 /** Os clubes licenciados, com o nome como a casa escreve e o padrão que acha no produto. */
 export const CLUBES: { nome: string; regex: string }[] = [
@@ -124,19 +124,25 @@ function linhas(c: Consulta): unknown[][] {
   return c.ok ? c.linhas : [];
 }
 
-export async function montarCardapio(env: Env): Promise<Cardapio> {
-  const [clubesQ, familiasQ, lancamentosQ, radar] = await Promise.all([
+/**
+  * `jaColetado` evita a segunda varredura do calendário: a reunião já busca o
+  * mundo (src/web/mundo.ts) e cada rodada do globoesporte é uma requisição
+  * externa. Buscar duas vezes a mesma tabela é gasto puro de subrequest — e o
+  * Worker tem teto disso.
+  */
+export async function montarCardapio(env: Env, jaColetado?: Calendario): Promise<Cardapio> {
+  const [clubesQ, familiasQ, lancamentosQ, calendario] = await Promise.all([
     executarConsulta(env, SQL_CLUBES),
     executarConsulta(env, SQL_FAMILIAS),
     executarConsulta(env, SQL_LANCAMENTOS),
-    buscarPainelTendencias(env),
+    jaColetado ? Promise.resolve(jaColetado) : buscarCalendario(14),
   ]);
 
   const falhas: string[] = [];
   if (!clubesQ.ok) falhas.push(`clubes: ${clubesQ.erro}`);
   if (!familiasQ.ok) falhas.push(`familias: ${familiasQ.erro}`);
   if (!lancamentosQ.ok) falhas.push(`lancamentos: ${lancamentosQ.erro}`);
-  falhas.push(...radar.fontes_com_falha);
+  if (!calendario.ok) falhas.push(`calendario: ${calendario.erro}`);
 
   const clubes: LinhaClube[] = linhas(clubesQ)
     .map((r) => {
@@ -162,7 +168,7 @@ export async function montarCardapio(env: Env): Promise<Cardapio> {
   return {
     ok: clubes.length > 0 || familias.length > 0,
     clubes, familias, lancamentos,
-    jogos: (radar.painel as any)?.calendario ?? null,
+    jogos: calendario.proximos,
     falhas,
     nomesDeClube: clubes.map((c) => c.clube),
     nomesDeFamilia: [...new Set(familias.flatMap((f) => [f.familia, f.tipo]))].filter((x) => x && !/^sem /.test(x)),
@@ -212,9 +218,15 @@ export function formatarCardapio(c: Cardapio): string {
     partes.push('\nLANÇAMENTOS: nada estreou nos últimos 45 dias. Isso por si só é um fato sobre a área.');
   }
 
-  if (c.jogos) {
-    const txt = JSON.stringify(c.jogos);
-    partes.push('\nJOGOS QUE VÊM AÍ (calendário real):\n' + (txt.length > 2000 ? txt.slice(0, 2000) + '…' : txt));
+  const jogos = (c.jogos as { mandante: string; visitante: string; data: string | null; em_dias: number | null; classico: boolean }[]) || [];
+  if (jogos.length) {
+    partes.push(
+      '\nJOGOS QUE VÊM AÍ (calendário real do globoesporte — é a janela em que dá pra produzir e vender):\n' +
+      jogos.slice(0, 12).map((j) =>
+        `- ${j.mandante} x ${j.visitante}${j.data ? ` em ${j.data}` : ''}` +
+        (j.em_dias !== null ? ` (daqui a ${j.em_dias} dias)` : '') + (j.classico ? ' ⚔ CLÁSSICO' : ''),
+      ).join('\n'),
+    );
   }
 
   if (c.falhas.length) partes.push(`\n(fontes com falha nesta rodada: ${c.falhas.join('; ')})`);
