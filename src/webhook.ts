@@ -32,6 +32,8 @@ export interface AtaParaWebhook {
   placar_vendas: string;
   recomendacoes: { o_que: string; por_que: string; quem: string; ate_quando: string; risco: string }[];
   entregas: { nome: string; entrega: string; pronta: boolean }[];
+  /** Quantas recomendações o juiz barrou por genéricas. Aparece no card como aviso de calibragem. */
+  reprovadas: number;
   precisamos_de_voce: string;
   url: string;        // a salinha, reencenando esta reunião
   urlAta: string;     // a ata completa desta reunião
@@ -62,7 +64,9 @@ function corpoGoogleChat(ata: AtaParaWebhook): unknown {
     }
   } else {
     linhas.push('');
-    linhas.push('_A mesa não recomendou nada nesta rodada — o dado de hoje não sustentou nenhuma decisão nova._');
+    linhas.push(ata.reprovadas
+      ? `_A mesa não entregou recomendação: ${ata.reprovadas} foram barradas na conferência por serem genéricas demais (sem clube, produto, número ou prazo)._`
+      : '_A mesa não recomendou nada nesta rodada — o dado de hoje não sustentou nenhuma decisão nova._');
   }
 
   if (ata.entregas?.length) {

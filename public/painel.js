@@ -126,6 +126,7 @@ function mostrarAta() {
   const lista = (arr, fn) => (arr?.length ? '<ul>' + arr.map(fn).join('') + '</ul>' : '<p class="fraco">—</p>');
   const recos = a.recomendacoes || [];
   const entregas = a.entregas || [];
+  const reprovadas = a.reprovadas || [];
   abrirPainel(`
     <h2>Ata da reunião</h2>
     <div class="fraco">${esc(a.tema)} · ${esc(new Date(a.quando).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' }))}</div>
@@ -139,6 +140,11 @@ function mostrarAta() {
           <span class="rodada">${esc(nomeDe(r.quem))}${r.ate_quando ? ' · até ' + esc(r.ate_quando) : ''}</span>
           ${r.risco ? `<br><span class="fraco">⚠ ${esc(r.risco)}</span>` : ''}</div>`).join('')
       : '<p class="fraco">Nada recomendado nesta rodada — o dado de hoje não sustentou decisão nova.</p>'}
+
+    ${reprovadas.length ? `<label>🚫 Barradas na conferência (${reprovadas.length})</label>
+      <p class="fraco">A mesa tentou entregar isto e a régua barrou: toda recomendação precisa de clube, produto,
+      número e prazo.</p>` + reprovadas.map((x) => `<div class="item">${esc(x.o_que)}<br>
+        <span class="fraco">${(x.motivos || []).map(esc).join(' · ')}</span></div>`).join('') : ''}
 
     ${a.precisamos_de_voce ? `<label>🙋 A mesa precisa de você</label><p>${esc(a.precisamos_de_voce)}</p>` : ''}
 
@@ -464,7 +470,7 @@ setInterval(() => { if (!encenacao) encenarCorredor(); }, 45000);
 $('btnConvocar').onclick = async () => {
   const tema = $('campoTema').value.trim();
   const status = $('statusBarra');
-  status.textContent = 'a mesa está se reunindo… (leva 2 a 5 min: são umas 20 chamadas de IA, a investigação e a ata)';
+  status.textContent = 'a mesa está se reunindo… (leva 3 a 6 min: cardápio, investigação, entrega, conferência e ata)';
   reunirNaMesa((estado?.agentes || []).map((a) => a.chave));
   try {
     const res = await fetch('/api/reuniao', {

@@ -44,11 +44,17 @@ function json(d: unknown, s = 200): Response {
   });
 }
 
-// Próxima hora par em UTC — é o que o cron de 2 em 2 horas significa na prática.
+// A reunião é UMA por dia, às 11:00 UTC — 08:00 em Fortaleza, de modo que a
+// ata já esteja pronta quando o João senta. Era de 2 em 2 horas até 16/09/2026
+// e isso era parte do problema: 12 rodadas por dia sobre fontes que mudam uma
+// vez ao dia só podiam produzir reunião rasa e repetida.
+const HORA_DA_REUNIAO_UTC = 11;
+
 function proximaReuniaoISO(): string {
   const agora = new Date();
-  const prox = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate(), agora.getUTCHours(), 0, 0, 0));
-  do { prox.setUTCHours(prox.getUTCHours() + 1); } while (prox.getUTCHours() % 2 !== 0);
+  const prox = new Date(Date.UTC(
+    agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate(), HORA_DA_REUNIAO_UTC, 0, 0, 0));
+  if (prox.getTime() <= agora.getTime()) prox.setUTCDate(prox.getUTCDate() + 1);
   return prox.toISOString();
 }
 
@@ -59,6 +65,7 @@ function paraWebhook(r: ResultadoReuniao, origem: string): AtaParaWebhook {
     consenso: r.ata.consenso, divergencias: r.ata.divergencias,
     acoes: r.ata.acoes, placar_vendas: r.ata.placar_vendas,
     recomendacoes: r.ata.recomendacoes,
+    reprovadas: r.ata.reprovadas.length,
     entregas: r.ata.entregas.map((e) => ({ nome: e.nome, entrega: e.entrega, pronta: e.pronta })),
     precisamos_de_voce: r.ata.precisamos_de_voce,
     url: `${origem}/index.html?sessao=${encodeURIComponent(r.sessao)}`,
@@ -303,6 +310,7 @@ export default {
             webhook_status: ata.webhook_status, modo: ata.modo || 'completa',
             consenso: seguro(ata.consenso), divergencias: seguro(ata.divergencias), acoes: seguro(ata.acoes),
             recomendacoes: seguro(ata.recomendacoes), entregas: seguro(ata.entregas),
+            reprovadas: seguro(ata.reprovadas),
             precisamos_de_voce: String(ata.precisamos_de_voce || ''),
           },
           falas: falas.rows,
@@ -401,6 +409,7 @@ export default {
             o_que: 'Nada a fazer — isto é um teste de canal',
             por_que: 'nenhuma reunião rodou aqui', quem: 'joao', ate_quando: '', risco: '',
           }],
+          reprovadas: 0,
           entregas: [], precisamos_de_voce: '',
           url: url.origin + '/index.html', urlAta: url.origin + '/ata',
         });

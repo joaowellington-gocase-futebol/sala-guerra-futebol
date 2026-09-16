@@ -242,85 +242,35 @@ export async function responderDemanda(
 }
 
 // ── A rodada de DIREÇÃO: o que a mesa recomenda ao João ──────────────────
+//
+// Reescrita em 16/09/2026, depois do veredito dele sobre a primeira versão:
+// "recomendação genérica" e "assunto irrelevante". Duas mudanças, e as duas
+// tiram poder do prompt e dão pro código:
+//
+//   1. A mesa escolhe DENTRO DO CARDÁPIO (src/fontes/cardapio.ts) — clubes,
+//      famílias e lançamentos que existem de verdade, com venda ao lado. Antes
+//      ela recomendava no vácuo, e no vácuo tudo o que sai é plausível.
+//   2. O que ela escreve passa pelo JUIZ (src/juiz.ts) antes de virar ata. Sem
+//      clube, sem produto, sem número e sem prazo, volta pra refazer uma vez —
+//      e o que continuar vago é registrado como reprovado, não entregue.
 
-export interface Recomendacao {
-  o_que: string;
-  por_que: string;
-  quem: string;
-  ate_quando: string;
-  risco: string;
-}
+import { type Recomendacao, julgarTodas, formatarReprovacao } from './juiz';
+import { type Cardapio, formatarCardapio } from './fontes/cardapio';
+
+export type { Recomendacao };
 
 export interface FechamentoDaMesa {
   recomendacoes: Recomendacao[];
+  /** O que a mesa tentou empurrar e a conferência barrou. Vai pra ata: é sinal de calibragem. */
+  reprovadas: { o_que: string; motivos: string[] }[];
   se_eu_fosse_voce: string;
   precisamos_de_voce: string;
 }
 
-const VAZIO: FechamentoDaMesa = { recomendacoes: [], se_eu_fosse_voce: '', precisamos_de_voce: '' };
+const VAZIO: FechamentoDaMesa = { recomendacoes: [], reprovadas: [], se_eu_fosse_voce: '', precisamos_de_voce: '' };
 
-/**
- * O fecho que faltava. A mesa para de explicar o mercado e diz ao João o que
- * fazer com o que descobriu — com dono, prazo e o risco de fazer.
- */
-export async function fecharComDirecao(
-  env: Env,
-  ctx: { tema: string; achado: string; lentes: string; entregas: EntregaDeDemanda[]; naoRepita: string; direcao: DirecaoAberta },
-): Promise<FechamentoDaMesa> {
-  const nomes = Object.entries(MESA).map(([k, v]) => `${k} = ${v}`).join('; ');
-
-  const r = await chamarAgente(
-    env,
-    'Você é a mesa inteira — Téo, Rafa, Nina, Caio e Val — fechando a reunião para o JOÃO WELLINGTON, que ' +
-    'coordena a área de futebol da Gocase e é quem vai decidir com o que vocês entregarem.\n\n' +
-    'A reunião inteira até aqui foi investigação: perguntas testadas contra a venda real. Agora vem a parte ' +
-    'que estava faltando e que ele cobrou com todas as letras — A DIREÇÃO. Ele não quer saber só como o ' +
-    'mercado se comporta; ele quer saber O QUE FAZER com isso.\n\n' +
-    '━━ O QUE VOCÊS DEVOLVEM ━━\n' +
-    '• "recomendacoes": de 1 a 3, em ordem de importância. Cada uma é uma COISA PRA FAZER, não um tema pra ' +
-    'estudar. Escreva do jeito que se fala para alguém que vai executar: o que fazer, em que produto/clube, ' +
-    'com que corte. "Subir uma linha de térmico do Ceará em cima do mosaico de azulejo, 3 SKUs, antes do ' +
-    'clássico de 20/09" é recomendação. "Explorar o potencial do mercado nordestino" não é nada.\n' +
-    '• "por_que": a evidência NUMÉRICA que veio da investigação de hoje, colada. Recomendação sem número ' +
-    'atrás é palpite, e a Rafa não deixa passar palpite.\n' +
-    '• "quem": a chave de quem toca isso — ' + nomes + ' — ou "joao" quando a decisão é dele e só dele ' +
-    '(investir dinheiro, mudar prioridade da área, falar com outra equipe).\n' +
-    '• "ate_quando": data ou janela concreta. "Assim que possível" não é prazo.\n' +
-    '• "risco": o que pode dar errado se ele seguir esta recomendação, em uma frase. Quem só mostra o lado bom ' +
-    'está vendendo, não recomendando.\n' +
-    '• "se_eu_fosse_voce": 1 ou 2 frases, direto ao João, dizendo a ÚNICA coisa que vocês fariam se só desse ' +
-    'pra fazer uma. É isto que vai chegar no celular dele — então é a frase mais importante da reunião.\n' +
-    '• "precisamos_de_voce": o que a mesa precisa que ele decida, libere ou responda pra conseguir andar. ' +
-    'Vazio se não precisa de nada.\n\n' +
-    '━━ O QUE DESQUALIFICA UMA RECOMENDAÇÃO ━━\n' +
-    'Ser óbvia ("acompanhar de perto", "reforçar a comunicação"). Não ter número atrás. Repetir o que a mesa ' +
-    'já recomendou nas últimas rodadas. Ser grande demais pra caber no prazo que vocês mesmos deram.\n' +
-    'E o pior de todos: recomendar por recomendar. Se a rodada de hoje honestamente não sustenta nenhuma ' +
-    'decisão nova, devolvam lista VAZIA e digam isso em "se_eu_fosse_voce" — o João prefere "hoje não tem nada ' +
-    'que justifique mexer" a uma recomendação inventada pra parecer produtivo. Isso é dizer a verdade, e é o ' +
-    'que ele pede da mesa desde o começo.' +
-    ctx.naoRepita,
-    [
-      `PAUTA DESTA REUNIÃO: ${ctx.tema}`,
-      ctx.direcao.tema ? `PAUTA DADA PELO JOÃO: ${ctx.direcao.tema.texto}` : '',
-      ctx.direcao.feedbacks.length
-        ? 'FEEDBACKS ABERTOS DELE (a recomendação tem que levar isto em conta):\n' +
-          ctx.direcao.feedbacks.map((f) => `- ${f.texto}`).join('\n')
-        : '',
-      `\nO QUE A INVESTIGAÇÃO DE HOJE MOSTROU:\n${ctx.achado}`,
-      ctx.lentes ? `\nCOMO CADA UM LEU ISSO:\n${ctx.lentes}` : '',
-      ctx.entregas.length
-        ? '\nO QUE A MESA ENTREGOU DO QUE ELE PEDIU:\n' +
-          ctx.entregas.map((e) => `- ${e.nome}: ${e.entrega}`).join('\n')
-        : '',
-    ].filter(Boolean).join('\n'),
-    undefined,
-    0.45,
-  );
-
-  if (!r.ok) return VAZIO;
-  const d = r.dados as any;
-  const recomendacoes: Recomendacao[] = (Array.isArray(d?.recomendacoes) ? d.recomendacoes : [])
+function lerRecomendacoes(d: any): Recomendacao[] {
+  return (Array.isArray(d?.recomendacoes) ? d.recomendacoes : [])
     .slice(0, 3)
     .map((x: any) => ({
       o_que: String(x?.o_que || '').slice(0, 500),
@@ -330,10 +280,108 @@ export async function fecharComDirecao(
       risco: String(x?.risco || '').slice(0, 300),
     }))
     .filter((x: Recomendacao) => x.o_que);
+}
+
+function systemDoFechamento(cardapio: Cardapio, placar: string): string {
+  const nomes = Object.entries(MESA).map(([k, v]) => `${k} = ${v}`).join('; ');
+  return (
+    'Você é a mesa inteira — Téo, Rafa, Nina, Caio e Val — fechando a reunião do dia para o JOÃO ' +
+    'WELLINGTON, que coordena a área de futebol da Gocase e decide com o que vocês entregarem.\n\n' +
+    'A reunião foi investigação: perguntas testadas contra a venda real. Agora vem a parte que ele cobrou ' +
+    'com todas as letras — A DIREÇÃO. Não é "o que o mercado está fazendo"; é O QUE A GOCASE FAZ AMANHÃ DE ' +
+    'MANHÃ.\n\n' +
+    placar + '\n\n' + formatarCardapio(cardapio) + '\n\n' +
+    '━━ COMO ESCREVER UMA RECOMENDAÇÃO QUE PASSA ━━\n' +
+    'Existe uma conferência automática depois de você, e ela não lê intenção — lê o texto. Uma recomendação ' +
+    'só chega ao João se tiver as quatro coisas:\n' +
+    '  1. O CLUBE, pelo nome, escolhido da lista do cardápio acima.\n' +
+    '  2. O PRODUTO, pelo nome: a família/tipo do cardápio, ou o produto concreto (capinha, térmico, caneca, ' +
+    'camiseta…). "Uma linha nova" não é produto.\n' +
+    '  3. Um NÚMERO no "por_que", tirado da investigação de hoje ou do cardápio. Sem número é palpite.\n' +
+    '  4. Um PRAZO de verdade: data, dia da semana, "até quinta". "O quanto antes" não é prazo.\n' +
+    'Exemplo do que passa: "Subir 3 SKUs de térmico do Ceará com o mosaico alvinegro até 19/09" — por quê: ' +
+    '"térmico do Ceará fez 412 un em 30d, +38% contra o mês anterior".\n' +
+    'Exemplo do que é reprovado na hora: "Explorar o engajamento da torcida nordestina".\n\n' +
+    '━━ O RESTO DO QUE VOCÊS DEVOLVEM ━━\n' +
+    '• "quem": a chave de quem toca — ' + nomes + ' — ou "joao" quando a decisão é dele e só dele.\n' +
+    '• "risco": o que pode dar errado se ele seguir, em uma frase. Quem só mostra o lado bom está vendendo.\n' +
+    '• "se_eu_fosse_voce": 1 ou 2 frases, direto ao João, com a ÚNICA coisa que vocês fariam se só desse pra ' +
+    'fazer uma. É o que chega no celular dele.\n' +
+    '• "precisamos_de_voce": o que a mesa precisa que ele decida ou libere. Vazio se não precisa de nada.\n\n' +
+    '━━ E A SAÍDA HONESTA ━━\n' +
+    'Se a rodada de hoje não sustenta decisão nova, devolvam lista VAZIA e digam isso em "se_eu_fosse_voce". ' +
+    'Ele prefere "hoje não tem nada que justifique mexer" a uma recomendação inventada pra parecer produtivo ' +
+    '— e a conferência vai derrubar a inventada de qualquer jeito. No máximo 3, e é melhor UMA boa que três ' +
+    'mornas.'
+  );
+}
+
+/**
+ * O fecho da reunião: a mesa escolhe do cardápio, o juiz confere, e quem não
+ * passou tem UMA chance de refazer com o motivo na mão.
+ */
+export async function fecharComDirecao(
+  env: Env,
+  ctx: {
+    tema: string; achado: string; lentes: string; entregas: EntregaDeDemanda[];
+    naoRepita: string; direcao: DirecaoAberta; cardapio: Cardapio; placar: string;
+  },
+): Promise<FechamentoDaMesa> {
+  const system = systemDoFechamento(ctx.cardapio, ctx.placar);
+  const corpo = [
+    `PAUTA DESTA REUNIÃO: ${ctx.tema}`,
+    ctx.direcao.tema ? `PAUTA DADA PELO JOÃO: ${ctx.direcao.tema.texto}` : '',
+    ctx.direcao.feedbacks.length
+      ? 'FEEDBACKS ABERTOS DELE (a recomendação tem que levar isto em conta):\n' +
+        ctx.direcao.feedbacks.map((f) => `- ${f.texto}`).join('\n')
+      : '',
+    `\nO QUE A INVESTIGAÇÃO DE HOJE MOSTROU:\n${ctx.achado}`,
+    ctx.lentes ? `\nCOMO CADA UM LEU ISSO:\n${ctx.lentes}` : '',
+    ctx.entregas.length
+      ? '\nO QUE A MESA ENTREGOU DO QUE ELE PEDIU:\n' +
+        ctx.entregas.map((e) => `- ${e.nome}: ${e.entrega}`).join('\n')
+      : '',
+  ].filter(Boolean).join('\n');
+
+  const formato =
+    '\n\nResponda APENAS {"recomendacoes":[{"o_que":"..","por_que":"..","quem":"..","ate_quando":"..",' +
+    '"risco":".."}],"se_eu_fosse_voce":"..","precisamos_de_voce":".."}';
+
+  const r1 = await chamarAgente(env, system + ctx.naoRepita + formato, corpo, undefined, 0.45);
+  if (!r1.ok) return VAZIO;
+  const d1 = r1.dados as any;
+
+  let { aprovadas, reprovadas } = julgarTodas(lerRecomendacoes(d1), ctx.cardapio);
+
+  // A segunda chance. Só roda se houve reprovação E ainda não há nenhuma
+  // aprovada — quando uma já passou, a mesa entregou o que tinha de entregar e
+  // não vale gastar outra chamada pra salvar as fracas.
+  if (reprovadas.length && !aprovadas.length) {
+    const r2 = await chamarAgente(
+      env,
+      system + ctx.naoRepita + formato,
+      corpo + '\n\n' + formatarReprovacao(reprovadas),
+      undefined,
+      0.4,
+    );
+    if (r2.ok) {
+      const d2 = r2.dados as any;
+      const segunda = julgarTodas(lerRecomendacoes(d2), ctx.cardapio);
+      aprovadas = segunda.aprovadas;
+      // Guarda as duas rodadas de reprovação: é o registro de que a mesa
+      // tentou empurrar vaguidão duas vezes, e isso é informação sobre ela.
+      reprovadas = [...reprovadas, ...segunda.reprovadas];
+      if (segunda.aprovadas.length || String(d2?.se_eu_fosse_voce || '').trim()) {
+        d1.se_eu_fosse_voce = d2?.se_eu_fosse_voce || d1?.se_eu_fosse_voce;
+        d1.precisamos_de_voce = d2?.precisamos_de_voce || d1?.precisamos_de_voce;
+      }
+    }
+  }
 
   return {
-    recomendacoes,
-    se_eu_fosse_voce: String(d?.se_eu_fosse_voce || '').slice(0, 600),
-    precisamos_de_voce: String(d?.precisamos_de_voce || '').slice(0, 400),
+    recomendacoes: aprovadas,
+    reprovadas: reprovadas.map((x) => ({ o_que: x.rec.o_que, motivos: x.motivos })),
+    se_eu_fosse_voce: String(d1?.se_eu_fosse_voce || '').slice(0, 600),
+    precisamos_de_voce: String(d1?.precisamos_de_voce || '').slice(0, 400),
   };
 }

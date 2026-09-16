@@ -95,6 +95,7 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
   const acoes: { agente: string; acao: string; prazo?: string }[] = jsonSeguro(ata.acoes);
   const recomendacoes: { o_que: string; por_que: string; quem: string; ate_quando: string; risco: string }[] = jsonSeguro(ata.recomendacoes);
   const entregas: { id: number; nome: string; entrega: string; o_que_falta: string; pronta: boolean }[] = jsonSeguro(ata.entregas);
+  const reprovadas: { o_que: string; motivos: string[] }[] = jsonSeguro(ata.reprovadas);
 
   // O pedido original de cada entrega, pra página mostrar o que foi pedido ao
   // lado do que veio — sem isso a entrega aparece solta e não dá pra julgar.
@@ -126,6 +127,16 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
       ${r.risco ? `<div class="risco">⚠ ${esc(r.risco)}</div>` : ''}
     </div>`).join('')
     : '<p class="vazio">A mesa não recomendou nada nesta rodada. Isso é uma resposta: o dado de hoje não sustentou nenhuma decisão nova, e recomendação inventada pra parecer produtiva é pior que silêncio.</p>'}
+
+  ${reprovadas.length ? `<h2>🚫 Barradas na conferência</h2>
+  <p class="vazio" style="margin-bottom:10px">Estas a mesa tentou entregar e a conferência automática barrou antes de
+  chegar em você. A régua é sempre a mesma: clube com nome, produto com nome, um número como evidência e um prazo
+  de verdade. Ver muita coisa aqui quer dizer que a mesa está falando no vácuo; ver nenhuma nunca quer dizer que a
+  régua ficou frouxa.</p>` + reprovadas.map((x) => `
+    <div class="destaque brigou">
+      <div class="quem">${esc(x.o_que)}</div>
+      <ul>${(x.motivos || []).map((m) => `<li>${esc(m)}</li>`).join('')}</ul>
+    </div>`).join('') : ''}
 
   ${ata.precisamos_de_voce ? `<h2>🙋 A mesa precisa de você</h2><div class="destaque">${esc(ata.precisamos_de_voce)}</div>` : ''}
 

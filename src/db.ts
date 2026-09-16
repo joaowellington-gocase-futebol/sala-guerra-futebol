@@ -90,6 +90,9 @@ export async function migrar(env: Env) {
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN recomendacoes TEXT', []); } catch { /* já existe */ }
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN entregas TEXT', []); } catch { /* já existe */ }
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN precisamos_de_voce TEXT', []); } catch { /* já existe */ }
+  // O que o juiz barrou por genérico (src/juiz.ts). Registrado de propósito: se
+  // a mesa reprova muito, o problema é a mesa; se reprova nada, o juiz ficou frouxo.
+  try { await env.DB.exec('ALTER TABLE atas ADD COLUMN reprovadas TEXT', []); } catch { /* já existe */ }
 
   // FALAS: a linha do tempo da reunião em texto curto, do jeito que a salinha
   // 16-bit precisa pra reencenar a conversa em balões sobre os sprites.

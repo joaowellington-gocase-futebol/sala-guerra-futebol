@@ -46,6 +46,8 @@ import { buscarVendasFutebol } from './fontes/vendasFutebol';
 import { pautasVindasDoCorredor, marcarPautasAproveitadas } from './corredor';
 import { PESSOAS } from './pessoas';
 import { investigarMercado } from './investigacao';
+import { montarCardapio, formatarCardapio, type Cardapio } from './fontes/cardapio';
+import { medirRecomendacoesAnteriores, formatarPlacar } from './placar';
 import {
   direcaoAberta, blocoDoCoordenador, impressaoDaDirecao, responderDemanda, fecharComDirecao,
   registrarResposta, contarRodada,
@@ -87,6 +89,8 @@ export interface Ata {
   acoes: { agente: string; acao: string; prazo?: string }[];
   placar_vendas: string;
   recomendacoes: Recomendacao[];
+  /** O que o juiz barrou por ser genérico. Fica registrado: é calibragem, não vergonha. */
+  reprovadas: { o_que: string; motivos: string[] }[];
   entregas: EntregaDeDemanda[];
   precisamos_de_voce: string;
 }
@@ -333,7 +337,15 @@ export async function rodarReuniao(
   // feedback ou pedido novo dele é motivo pra reunir de verdade, mesmo que o
   // mundo lá fora não tenha mexido um milímetro. Ele é o único que consegue
   // convocar uma reunião só falando.
-  const direcao = await direcaoAberta(env);
+  // O cardápio (o que a casa tem na mão) e o placar (o que deu a recomendação
+  // anterior) vêm antes de qualquer chamada de IA: são eles que impedem a mesa
+  // de falar no vácuo, que era a queixa do João em 16/09.
+  const [direcao, cardapio, placarBruto] = await Promise.all([
+    direcaoAberta(env),
+    montarCardapio(env),
+    medirRecomendacoesAnteriores(env),
+  ]);
+  const placar = formatarPlacar(placarBruto);
   const fontes: Record<string, FonteAutomatica | null> = {};
   await Promise.all(COLETA.map(async (chave) => { fontes[chave] = await buscarFonteAutomatica(env, chave); }));
   const impressao = impressaoDigital({
@@ -348,6 +360,31 @@ export async function rodarReuniao(
 
   if (modo === 'revisao') {
     return await rodarRevisao(env, { sessao, quando, automatica, impressao, anteriores, fontes, direcao });
+  }
+
+  // ── 0.5. A PRESTAÇÃO DE CONTAS abre a reunião ───────────────────────────
+  //
+  // Antes de qualquer coisa nova, o que deu a recomendação da véspera. É a
+  // Rafa quem diz, porque é número — e é a primeira fala da sala de propósito:
+  // uma mesa que cobra a si mesma antes de opinar de novo é uma mesa diferente.
+  if (placarBruto.houve) {
+    ordem += 1;
+    const rafaContas = acharAgente('analista')!;
+    const medida = placarBruto.medidas.find((m) => m.un_depois !== null);
+    const falaPlacar = medida
+      ? `Da última: ${medida.clube} fez ${medida.un_depois} un em ${placarBruto.dias}d` +
+        (medida.variacao_pct === null ? '' : ` (${medida.variacao_pct > 0 ? '+' : ''}${medida.variacao_pct}%)`)
+      : 'Não deu pra medir o que a gente recomendou da última vez.';
+    etapas.push({
+      rodada: 'contas', ordem, chave: rafaContas.chave, nome: rafaContas.nome,
+      ok: true, dados: placarBruto, fala: falaPlacar.slice(0, 300),
+    });
+    try {
+      await env.DB.exec('INSERT INTO falas (sessao, ordem, rodada, chave, texto, criado_em) VALUES (?, ?, ?, ?, ?, ?)',
+        [sessao, ordem, 'contas', rafaContas.chave, falaPlacar.slice(0, 300), new Date().toISOString()]);
+      await env.DB.exec('INSERT INTO reunioes (sessao, etapa, chave, dados, criado_em) VALUES (?, ?, ?, ?, ?)',
+        [sessao, ordem, rafaContas.chave, JSON.stringify(placarBruto).slice(0, 12000), new Date().toISOString()]);
+    } catch { /* registro auxiliar */ }
   }
 
   // ── 1. OS FATOS — olheiro e analista, em paralelo ───────────────────────
@@ -407,7 +444,10 @@ export async function rodarReuniao(
   }
 
   // Tudo que a mesa tem na mão antes de começar a pensar.
-  const dossie = contextoDe(coleta) + (vozesDaCasa ? `\n\n${vozesDaCasa}` : '');
+  const dossie = contextoDe(coleta) +
+    (vozesDaCasa ? `\n\n${vozesDaCasa}` : '') +
+    `\n\n${formatarCardapio(cardapio)}` +
+    `\n\n${placar}`;
 
   // ── 3. A INVESTIGAÇÃO ───────────────────────────────────────────────────
   //
@@ -422,8 +462,18 @@ export async function rodarReuniao(
       '\nUma pergunta que ajuda a responder o que ele pediu vale mais que uma pergunta interessante e solta.\n\n'
     : '';
 
+  // O que torna a pergunta RELEVANTE (a segunda queixa dele): ela tem que
+  // poder mudar uma decisão sobre um clube e um produto que existem. Pergunta
+  // sobre um mercado abstrato rende ata bonita e nenhuma escolha.
+  const blocoCardapioInvestigacao =
+    formatarCardapio(cardapio) +
+    '\n\nA PERGUNTA DE HOJE TEM QUE SER SOBRE ISTO. Ela precisa ser capaz de mudar o que a casa faz com um ' +
+    'clube e um produto da lista acima. Se a resposta da sua pergunta não mudaria nenhuma decisão sobre nenhum ' +
+    'item desse cardápio, ela é curiosidade — troque por outra.\n\n';
+
   const inv = await investigarMercado(env, {
-    sessao, contexto: dossie, naoRepita, direcao: blocoDirecaoInvestigacao,
+    sessao, contexto: dossie, naoRepita,
+    direcao: blocoDirecaoInvestigacao + blocoCardapioInvestigacao,
   });
 
   const tema = String(opcoes.tema || '').trim()
@@ -529,7 +579,7 @@ export async function rodarReuniao(
 
   // ── 6. A DIREÇÃO — o que a mesa recomenda ao João ───────────────────────
   const fecho = await fecharComDirecao(env, {
-    tema, achado, lentes: textoLentes, entregas, naoRepita, direcao,
+    tema, achado, lentes: textoLentes, entregas, naoRepita, direcao, cardapio, placar,
   });
 
   if (fecho.recomendacoes.length || fecho.se_eu_fosse_voce) {
@@ -596,6 +646,7 @@ export async function rodarReuniao(
   const ata: Ata = {
     resumo: [
       fecho.se_eu_fosse_voce ? `O que a mesa recomenda: ${fecho.se_eu_fosse_voce}` : '',
+      placarBruto.houve ? placar.split('\nATENÇÃO AO LER ISTO:')[0].trim() : '',
       inv.leitura,
       motivoDaCegueira,
       textoLentes,
@@ -621,23 +672,25 @@ export async function rodarReuniao(
         ? `${inv.testes.filter((t) => t.veredito === 'refuta').length} de ${inv.testes.length} hipóteses caíram no teste`
         : `${inv.testes.filter((t) => t.veredito === 'confirma').length} de ${inv.testes.length} hipóteses confirmadas`,
     recomendacoes: fecho.recomendacoes,
+    reprovadas: fecho.reprovadas,
     entregas,
     precisamos_de_voce: fecho.precisamos_de_voce,
   };
 
   try {
     await env.DB.exec(
-      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, recomendacoes, entregas, precisamos_de_voce)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, recomendacoes, entregas, precisamos_de_voce, reprovadas)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sessao) DO UPDATE SET tema=excluded.tema, resumo=excluded.resumo,
          resumo_curto=excluded.resumo_curto, consenso=excluded.consenso,
          divergencias=excluded.divergencias, acoes=excluded.acoes, placar_vendas=excluded.placar_vendas,
          impressao=excluded.impressao, modo=excluded.modo, recomendacoes=excluded.recomendacoes,
-         entregas=excluded.entregas, precisamos_de_voce=excluded.precisamos_de_voce`,
+         entregas=excluded.entregas, precisamos_de_voce=excluded.precisamos_de_voce,
+         reprovadas=excluded.reprovadas`,
       [sessao, tema, quando, automatica ? 1 : 0, ata.resumo, ata.resumo_curto, JSON.stringify(ata.consenso),
        JSON.stringify(ata.divergencias), JSON.stringify(ata.acoes), ata.placar_vendas, 'pendente',
        impressao, 'completa', JSON.stringify(ata.recomendacoes), JSON.stringify(ata.entregas),
-       ata.precisamos_de_voce],
+       ata.precisamos_de_voce, JSON.stringify(ata.reprovadas)],
     );
   } catch { /* a ata em memória segue válida pro webhook */ }
 
@@ -717,16 +770,16 @@ async function rodarRevisao(
     acoes: contas.filter((c) => c.situacao === 'ignorada' && c.agente && c.tarefa)
       .map((c) => ({ agente: String(c.agente), acao: String(c.tarefa) })),
     placar_vendas: '',
-    recomendacoes: [], entregas: [], precisamos_de_voce: '',
+    recomendacoes: [], reprovadas: [], entregas: [], precisamos_de_voce: '',
   };
 
   try {
     await env.DB.exec(
-      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, recomendacoes, entregas, precisamos_de_voce)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, recomendacoes, entregas, precisamos_de_voce, reprovadas)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sessao) DO UPDATE SET tema=excluded.tema, resumo=excluded.resumo, modo=excluded.modo`,
       [ctx.sessao, tema, ctx.quando, ctx.automatica ? 1 : 0, ata.resumo, ata.resumo_curto, '[]', '[]',
-       JSON.stringify(ata.acoes), '', 'nao enviado (rodada de revisão)', ctx.impressao, 'revisao', '[]', '[]', ''],
+       JSON.stringify(ata.acoes), '', 'nao enviado (rodada de revisão)', ctx.impressao, 'revisao', '[]', '[]', '', '[]'],
     );
   } catch { /* idem */ }
 
