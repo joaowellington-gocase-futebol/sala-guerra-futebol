@@ -96,7 +96,8 @@ function protocolo(chave: string, area: string, fora: string, fonte: string): st
     `"criar algo especial". ` +
     `(3) Termine no concreto. Quando o dado sustentar, diga o que VOCÊ faria no seu pedaço — com nome de ` +
     `produto, de clube, de tratamento, de prazo. "O mercado sinaliza uma tendência" não é fala de profissional; ` +
-    `"eu subiria térmico do Ceará com mosaico até quinta" é. ` +
+    `"eu subiria térmico do <clube que joga domingo> com o motivo gráfico X até quinta" é — trocando o <clube> `
+    + `pelo da rodada de hoje. ` +
     `(4) Não tem cota, e isto continua valendo: se não há nada de novo no seu pedaço, diga isso em uma frase e ` +
     `pare. Silêncio honesto é melhor que enchimento, e recomendação inventada pra parecer produtivo é pior que ` +
     `os dois. ` +
@@ -134,9 +135,10 @@ export const AGENTES: Agente[] = [
     temperatura: 0.5,
     paleta: { pele: '#e8b98a', cabelo: '#3a2a1e', camisa: '#4fa3e0', calca: '#26374a', detalhe: '#ffd34d' },
     exemplo: JSON.stringify({
-      calendario: [{ evento: 'Ceará x Fortaleza', data: '2026-09-20', tipo: 'classico' }],
+      aviso: 'EXEMPLO DE FORMATO, NÃO DE CONTEÚDO — não repita estes nomes na sua resposta.',
+      calendario: [{ evento: '<clube A> x <clube B>', data: '<AAAA-MM-DD>', tipo: 'classico' }],
       google_trends_de_futebol: [{ termo: 'palmeiras libertadores', volume: '50mil+', manchete: 'Palmeiras avança' }],
-      manchetes: [{ titulo: 'Ceará anuncia uniforme 3', data: '2026-09-13' }],
+      manchetes: [{ titulo: '<clube> anuncia uniforme 3', data: '<AAAA-MM-DD>' }],
     }, null, 2),
     system:
       protocolo('olheiro',
@@ -223,7 +225,8 @@ export const AGENTES: Agente[] = [
     temperatura: 0.6,
     paleta: { pele: '#f0c9a0', cabelo: '#1d1d24', camisa: '#b64ec8', calca: '#2b2b3a', detalhe: '#ffffff' },
     exemplo: JSON.stringify({
-      alerta: { o_que: 'Ceará x Fortaleza em 20/09', urgencia: 'esta_semana' },
+      aviso: 'EXEMPLO DE FORMATO, NÃO DE CONTEÚDO — não repita estes nomes na sua resposta.',
+      alerta: { o_que: '<jogo com data>', urgencia: 'esta_semana' },
       vendas: { acelerando: ['Palmeiras - Uniforme 3 Selo'] },
       referencias_acervo: [{ titulo: 'mosaico de azulejo', confianca: 'A' }],
     }, null, 2),

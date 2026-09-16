@@ -33,6 +33,14 @@ export interface Veredito {
   motivos: string[];
 }
 
+/** O contexto que o juiz usa além do cardápio: o que já foi batido e quem joga. */
+export interface ContextoDoJuiz {
+  /** Clubes que viraram tema em 2+ das últimas atas. Repetir exige motivo novo. */
+  jaBatidos: string[];
+  /** Clubes que entram em campo na janela — esses podem repetir à vontade. */
+  emJogo: string[];
+}
+
 /** minúsculas e sem acento — pra "Grêmio" casar com "gremio". */
 export function normalizar(s: string): string {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -73,7 +81,7 @@ function citaAlgumDe(texto: string, lista: string[]): string | null {
  * Julga UMA recomendação contra o cardápio da rodada. Sem IA: ou o texto cita
  * as coisas que existem, ou não cita.
  */
-export function julgar(rec: Recomendacao, cardapio: Cardapio): Veredito {
+export function julgar(rec: Recomendacao, cardapio: Cardapio, ctx?: ContextoDoJuiz): Veredito {
   const motivos: string[] = [];
   const corpo = `${rec.o_que} ${rec.por_que}`;
   const tudo = `${rec.o_que} ${rec.por_que} ${rec.ate_quando}`;
@@ -121,6 +129,22 @@ export function julgar(rec: Recomendacao, cardapio: Cardapio): Veredito {
     motivos.push(`a frase se apoia em "${vago}", que é enfeite. Diga a ação concreta que substitui isso.`);
   }
 
+  // 6. Vício de tema. Clube que já foi assunto nas últimas rodadas só passa se
+  // tiver jogo na janela — aí a repetição tem motivo. Fora isso é a mesa presa
+  // no mesmo sulco, que foi exatamente a queixa do João sobre Ceará e
+  // Fortaleza.
+  if (ctx?.jaBatidos.length) {
+    const repetido = citaAlgumDe(corpo, ctx.jaBatidos);
+    const temJogo = ctx.emJogo.length ? citaAlgumDe(corpo, ctx.emJogo) : null;
+    if (repetido && !temJogo) {
+      motivos.push(
+        `${repetido} já foi tema das últimas rodadas e não entra em campo nesta janela. Ou você traz um clube ` +
+        `diferente, ou explica o que mudou nele que não estava lá antes — repetir o mesmo clube por inércia é ` +
+        `o vício que esta mesa precisa perder.`,
+      );
+    }
+  }
+
   return { aprovada: motivos.length === 0, motivos };
 }
 
@@ -129,11 +153,11 @@ export interface Julgamento {
   reprovadas: { rec: Recomendacao; motivos: string[] }[];
 }
 
-export function julgarTodas(recs: Recomendacao[], cardapio: Cardapio): Julgamento {
+export function julgarTodas(recs: Recomendacao[], cardapio: Cardapio, ctx?: ContextoDoJuiz): Julgamento {
   const aprovadas: Recomendacao[] = [];
   const reprovadas: { rec: Recomendacao; motivos: string[] }[] = [];
   for (const r of recs) {
-    const v = julgar(r, cardapio);
+    const v = julgar(r, cardapio, ctx);
     if (v.aprovada) aprovadas.push(r);
     else reprovadas.push({ rec: r, motivos: v.motivos });
   }

@@ -76,11 +76,13 @@ export function formatarNaoRepita(atas: AtaResumida[]): string {
   }).join('\n');
   return (
     `\n\nO QUE ESTA MESA JÁ DECIDIU NAS ÚLTIMAS REUNIÕES — LEIA ANTES DE FALAR:\n${linhas}\n` +
-    `REGRA DURA: não proponha de novo uma pauta, um escopo ou uma recomendação que já está nessa lista. ` +
-    `Se o dado de hoje não sustenta nada NOVO em relação ao que está aí, a resposta certa é dizer isso ` +
-    `explicitamente ("não tenho nada novo desde <a reunião de tal hora>, o que está de pé é X") em vez de ` +
-    `reescrever a mesma ideia com outras palavras. Repetir a mesa é o pior resultado possível — pior que ` +
-    `não ter achado nada.`
+    `REGRA DURA: não proponha de novo a mesma pauta, o mesmo clube ou a mesma recomendação que já está nessa ` +
+    `lista. Mude de ângulo: outro clube, outro produto, outra pergunta.\n` +
+    `E UM AVISO SOBRE COMO NÃO USAR ISTO: "não tenho nada novo desde a reunião passada" NÃO é saída. Esta ` +
+    `instrução existe pra te empurrar pra um assunto diferente, não pra te dar licença de não trabalhar. O ` +
+    `mundo lá fora mudou desde ontem — tem jogo marcado, procura se mexendo, concorrente lançando — e se você ` +
+    `está sem assunto com tudo isso na mesa, o problema é a pergunta que você escolheu, não a realidade. ` +
+    `Repetir a mesa é ruim; se esquivar dela é pior.`
   );
 }
 

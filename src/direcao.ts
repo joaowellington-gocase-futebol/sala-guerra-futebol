@@ -16,7 +16,7 @@
 //   FEEDBACK  — "a ata de ontem ficou rasa", "gostei do corte do clássico".
 //               Entra no system prompt de TODO MUNDO, como recado do chefe, e
 //               fica lá até ele arquivar. É o que faz a equipe corrigir rumo.
-//   DEMANDA   — "quero 3 direções de coleção pro Vozão até sexta". Tem dono,
+//   DEMANDA   — "quero 3 direções de coleção pro clube X até sexta". Tem dono,
 //               tem prazo, é respondida por um deles numa rodada própria e é
 //               cobrada em toda reunião até ele dar por entregue.
 //
@@ -254,7 +254,7 @@ export async function responderDemanda(
 //      clube, sem produto, sem número e sem prazo, volta pra refazer uma vez —
 //      e o que continuar vago é registrado como reprovado, não entregue.
 
-import { type Recomendacao, julgarTodas, formatarReprovacao } from './juiz';
+import { type Recomendacao, type ContextoDoJuiz, julgarTodas, formatarReprovacao } from './juiz';
 import { type Cardapio, formatarCardapio } from './fontes/cardapio';
 
 export type { Recomendacao };
@@ -282,7 +282,17 @@ function lerRecomendacoes(d: any): Recomendacao[] {
     .filter((x: Recomendacao) => x.o_que);
 }
 
-function systemDoFechamento(cardapio: Cardapio, placar: string): string {
+/**
+ * O material da rodada em uma lista curta. É isto que decide se "não há o que
+ * recomendar" é honestidade ou preguiça: se existe jogo com data, procura
+ * subindo ou a concorrência lançando, existe o que decidir.
+ */
+export interface MaterialDaRodada {
+  temMaterial: boolean;
+  linhas: string[];
+}
+
+function systemDoFechamento(cardapio: Cardapio, placar: string, material: MaterialDaRodada, jaBatidos: string[]): string {
   const nomes = Object.entries(MESA).map(([k, v]) => `${k} = ${v}`).join('; ');
   return (
     'Você é a mesa inteira — Téo, Rafa, Nina, Caio e Val — fechando a reunião do dia para o JOÃO ' +
@@ -299,8 +309,9 @@ function systemDoFechamento(cardapio: Cardapio, placar: string): string {
     'camiseta…). "Uma linha nova" não é produto.\n' +
     '  3. Um NÚMERO no "por_que", tirado da investigação de hoje ou do cardápio. Sem número é palpite.\n' +
     '  4. Um PRAZO de verdade: data, dia da semana, "até quinta". "O quanto antes" não é prazo.\n' +
-    'Exemplo do que passa: "Subir 3 SKUs de térmico do Ceará com o mosaico alvinegro até 19/09" — por quê: ' +
-    '"térmico do Ceará fez 412 un em 30d, +38% contra o mês anterior".\n' +
+    'A FORMA de uma que passa (os colchetes são pra você preencher com a rodada de hoje — NÃO copie nome ' +
+    'nenhum daqui): "Subir 3 SKUs de [produto] do [clube que joga na janela] com [motivo gráfico] até [data]" ' +
+    '— por quê: "[produto] do [clube] fez [N] un em 30d, [±X]% contra o mês anterior".\n' +
     'Exemplo do que é reprovado na hora: "Explorar o engajamento da torcida nordestina".\n\n' +
     '━━ O RESTO DO QUE VOCÊS DEVOLVEM ━━\n' +
     '• "quem": a chave de quem toca — ' + nomes + ' — ou "joao" quando a decisão é dele e só dele.\n' +
@@ -308,11 +319,27 @@ function systemDoFechamento(cardapio: Cardapio, placar: string): string {
     '• "se_eu_fosse_voce": 1 ou 2 frases, direto ao João, com a ÚNICA coisa que vocês fariam se só desse pra ' +
     'fazer uma. É o que chega no celular dele.\n' +
     '• "precisamos_de_voce": o que a mesa precisa que ele decida ou libere. Vazio se não precisa de nada.\n\n' +
-    '━━ E A SAÍDA HONESTA ━━\n' +
-    'Se a rodada de hoje não sustenta decisão nova, devolvam lista VAZIA e digam isso em "se_eu_fosse_voce". ' +
-    'Ele prefere "hoje não tem nada que justifique mexer" a uma recomendação inventada pra parecer produtivo ' +
-    '— e a conferência vai derrubar a inventada de qualquer jeito. No máximo 3, e é melhor UMA boa que três ' +
-    'mornas.'
+    (jaBatidos.length
+      ? `━━ CLUBES QUE VOCÊS JÁ BATERAM NAS ÚLTIMAS RODADAS ━━\n${jaBatidos.join(', ')}.\n` +
+        'A mesa ficou presa nesses. Só volte a um deles se ele entrar em campo nesta janela ou se algo mudou ' +
+        'nele que não estava lá antes — e nesse caso diga o que mudou. Fora isso, escolha outro clube: o país ' +
+        'tem vinte, e o João já reclamou de ouvir sempre os mesmos dois.\n\n'
+      : '') +
+    (material.temMaterial
+      ? '━━ VOCÊS TÊM MATERIAL HOJE ━━\n' +
+        'Não aceite de vocês mesmos um "não há o que recomendar" nesta rodada. O que está na mesa agora:\n' +
+        material.linhas.map((l) => `• ${l}`).join('\n') + '\n' +
+        'Com jogo marcado, procura se mexendo e concorrente lançando, existe decisão a tomar — nem que seja ' +
+        'pequena e de baixo risco. "Não temos o que fazer" com esse material na mão não é honestidade, é a mesa ' +
+        'se esquivando, e é literalmente a resposta que fez o João perder a paciência.\n' +
+        'Se a venda não carregou, recomende assim mesmo e cite a evidência que você TEM (procura, jogo, ' +
+        'notícia), dizendo que o número de venda faltou. Uma recomendação com evidência parcial e risco ' +
+        'declarado vale muito mais que silêncio.\n\n'
+      : '━━ E A SAÍDA HONESTA ━━\n' +
+        'Hoje não há jogo na janela, nem procura se mexendo, nem concorrente lançando. Se realmente não há o ' +
+        'que decidir, devolvam lista VAZIA e digam isso em "se_eu_fosse_voce" — com esse cenário, é resposta ' +
+        'legítima.\n\n') +
+    'No máximo 3 recomendações, e é melhor UMA boa que três mornas.'
   );
 }
 
@@ -325,9 +352,10 @@ export async function fecharComDirecao(
   ctx: {
     tema: string; achado: string; lentes: string; entregas: EntregaDeDemanda[];
     naoRepita: string; direcao: DirecaoAberta; cardapio: Cardapio; placar: string;
+    material: MaterialDaRodada; juiz: ContextoDoJuiz;
   },
 ): Promise<FechamentoDaMesa> {
-  const system = systemDoFechamento(ctx.cardapio, ctx.placar);
+  const system = systemDoFechamento(ctx.cardapio, ctx.placar, ctx.material, ctx.juiz.jaBatidos);
   const corpo = [
     `PAUTA DESTA REUNIÃO: ${ctx.tema}`,
     ctx.direcao.tema ? `PAUTA DADA PELO JOÃO: ${ctx.direcao.tema.texto}` : '',
@@ -351,22 +379,33 @@ export async function fecharComDirecao(
   if (!r1.ok) return VAZIO;
   const d1 = r1.dados as any;
 
-  let { aprovadas, reprovadas } = julgarTodas(lerRecomendacoes(d1), ctx.cardapio);
+  let { aprovadas, reprovadas } = julgarTodas(lerRecomendacoes(d1), ctx.cardapio, ctx.juiz);
 
-  // A segunda chance. Só roda se houve reprovação E ainda não há nenhuma
-  // aprovada — quando uma já passou, a mesa entregou o que tinha de entregar e
-  // não vale gastar outra chamada pra salvar as fracas.
-  if (reprovadas.length && !aprovadas.length) {
+  // A segunda chance roda quando não sobrou nada aprovado — seja porque tudo
+  // foi reprovado, seja porque a mesa devolveu lista vazia tendo material na
+  // mão. O segundo caso é novo e é o que quebra o "hoje não tem nada": com
+  // jogo marcado e procura se mexendo, lista vazia volta pra mesa com o
+  // material listado na cara.
+  const esquivou = !aprovadas.length && !reprovadas.length && ctx.material.temMaterial;
+  if ((reprovadas.length || esquivou) && !aprovadas.length) {
     const r2 = await chamarAgente(
       env,
       system + ctx.naoRepita + formato,
-      corpo + '\n\n' + formatarReprovacao(reprovadas),
+      corpo + '\n\n' + (reprovadas.length
+        ? formatarReprovacao(reprovadas)
+        : '⚠ VOCÊS DEVOLVERAM A LISTA VAZIA TENDO MATERIAL NA MÃO:\n' +
+          ctx.material.linhas.map((l) => `- ${l}`).join('\n') +
+          '\n\nIsso não passa. Com jogo marcado e movimento de procura, existe pelo menos uma decisão pequena ' +
+          'e defensável a tomar — e é justamente essa que o João está esperando há dias. Escolha um clube que ' +
+          'entra em campo, um produto que a casa fabrica, cite o número que você tem (venda, procura ou ' +
+          'notícia), ponha uma data e assuma o risco em uma frase. Se ainda assim você achar que não há nada, ' +
+          'a lista vazia precisa vir com o motivo específico: o que exatamente faltou, e o que destravaria.'),
       undefined,
       0.4,
     );
     if (r2.ok) {
       const d2 = r2.dados as any;
-      const segunda = julgarTodas(lerRecomendacoes(d2), ctx.cardapio);
+      const segunda = julgarTodas(lerRecomendacoes(d2), ctx.cardapio, ctx.juiz);
       aprovadas = segunda.aprovadas;
       // Guarda as duas rodadas de reprovação: é o registro de que a mesa
       // tentou empurrar vaguidão duas vezes, e isso é informação sobre ela.

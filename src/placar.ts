@@ -127,6 +127,35 @@ LIMIT 30`;
   };
 }
 
+/**
+ * Os clubes que a mesa já usou como tema nas últimas rodadas.
+ *
+ * POR QUE (João, 16/09/2026): "eles estão o tempo todo falando de Ceará e
+ * Fortaleza, porque foi uma série de teste que eu fiz". A mesa tinha ficado
+ * presa num par de clubes — parte por causa dos exemplos que eu escrevi nos
+ * prompts, parte porque nada no sistema notava a repetição. Um agente não
+ * percebe que está repetindo; o histórico percebe.
+ */
+export async function clubesJaBatidos(env: Env, quantasAtas = 5): Promise<string[]> {
+  const q = await env.DB.query(
+    'SELECT tema, recomendacoes FROM atas ORDER BY quando DESC LIMIT ?', [quantasAtas]);
+  const achados: string[] = [];
+  for (const linha of q.rows) {
+    let recs: { o_que?: string }[] = [];
+    try { recs = JSON.parse(String(linha.recomendacoes || '[]')); } catch { recs = []; }
+    const textos = [String(linha.tema || ''), ...recs.map((r) => String(r.o_que || ''))];
+    for (const t of textos) {
+      const c = clubeCitado(t);
+      if (c) achados.push(c);
+    }
+  }
+  // Só conta como "batido" quem apareceu mais de uma vez: um clube citado numa
+  // rodada só é assunto normal, não vício.
+  const contagem = new Map<string, number>();
+  for (const c of achados) contagem.set(c, (contagem.get(c) || 0) + 1);
+  return [...contagem.entries()].filter(([, n]) => n >= 2).map(([c]) => c);
+}
+
 /** O texto que abre a reunião. Curto, e sem se dar medalha. */
 export function formatarPlacar(p: Placar): string {
   if (!p.houve) {

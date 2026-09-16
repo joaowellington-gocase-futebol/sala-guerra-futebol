@@ -46,7 +46,7 @@ import { pautasVindasDoCorredor, marcarPautasAproveitadas } from './corredor';
 import { PESSOAS } from './pessoas';
 import { investigarMercado } from './investigacao';
 import { montarCardapio, formatarCardapio, type Cardapio } from './fontes/cardapio';
-import { medirRecomendacoesAnteriores, formatarPlacar } from './placar';
+import { medirRecomendacoesAnteriores, formatarPlacar, clubesJaBatidos } from './placar';
 import {
   direcaoAberta, blocoDoCoordenador, impressaoDaDirecao, responderDemanda, fecharComDirecao,
   registrarResposta, contarRodada,
@@ -362,10 +362,11 @@ export async function rodarReuniao(
   // O mundo primeiro: ele traz o calendário, que o cardápio reaproveita em vez
   // de varrer o globoesporte de novo.
   const mundo = await buscarMundo();
-  const [direcao, cardapio, placarBruto] = await Promise.all([
+  const [direcao, cardapio, placarBruto, jaBatidos] = await Promise.all([
     direcaoAberta(env),
     montarCardapio(env, mundo.calendario),
     medirRecomendacoesAnteriores(env),
+    clubesJaBatidos(env),
   ]);
   const placar = formatarPlacar(placarBruto);
   const fontes: Record<string, FonteAutomatica | null> = {};
@@ -608,8 +609,23 @@ export async function rodarReuniao(
   } catch { /* auxiliar */ }
 
   // ── 6. A DIREÇÃO — o que a mesa recomenda ao João ───────────────────────
+  // O material da rodada: é o que separa "não há o que recomendar" de esquiva.
+  // Enquanto houver jogo com data, procura se mexendo ou concorrente lançando,
+  // a mesa tem o que decidir — e o fechamento é cobrado por isso.
+  const linhasDeMaterial = [
+    ...mundo.calendario.proximos.slice(0, 4).map((j) =>
+      `${j.mandante} x ${j.visitante} em ${j.data} (daqui a ${j.em_dias} dias)${j.classico ? ' — CLÁSSICO' : ''}`),
+    ...mundo.procura.clubes.filter((c) => (c.variacao_pct ?? 0) >= 15)
+      .map((c) => `procura por ${c.clube} ${c.variacao_pct! > 0 ? '+' : ''}${c.variacao_pct}% em 14 dias`),
+    ...mundo.noticias.concorrencia.slice(0, 3).map((i) => `a concorrência lançou: ${i.titulo.slice(0, 110)}`),
+    ...mundo.noticias.uniformes.slice(0, 2).map((i) => `camisa nova: ${i.titulo.slice(0, 110)}`),
+    ...cardapio.clubes.slice(0, 3).map((c) => `${c.clube} vendeu ${c.un_30d} un em 30 dias`),
+  ];
+
   const fecho = await fecharComDirecao(env, {
     tema, achado, lentes: textoLentes, entregas, naoRepita, direcao, cardapio, placar,
+    material: { temMaterial: linhasDeMaterial.length >= 2, linhas: linhasDeMaterial.slice(0, 10) },
+    juiz: { jaBatidos, emJogo: mundo.clubesEmJogo },
   });
 
   if (fecho.recomendacoes.length || fecho.se_eu_fosse_voce) {
