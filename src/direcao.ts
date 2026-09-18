@@ -255,7 +255,7 @@ export async function responderDemanda(
 //      e o que continuar vago é registrado como reprovado, não entregue.
 
 import { type Recomendacao, type ContextoDoJuiz, julgarTodas, formatarReprovacao } from './juiz';
-import { type Cardapio, formatarCardapio } from './fontes/cardapio';
+import { type Cardapio, formatarCardapio } from './mercado/cardapio';
 
 export type { Recomendacao };
 

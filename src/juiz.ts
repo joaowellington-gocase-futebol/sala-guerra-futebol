@@ -18,7 +18,7 @@
 // um resultado melhor e mais barato do que uma frase bonita que ninguém
 // consegue executar.
 
-import type { Cardapio } from './fontes/cardapio';
+import type { Cardapio } from './mercado/cardapio';
 
 export interface Recomendacao {
   o_que: string;
@@ -101,11 +101,7 @@ export function julgar(rec: Recomendacao, cardapio: Cardapio, ctx?: ContextoDoJu
 
   // 2. Produto com nome: família/tipo do cardápio, produto lançado, ou palavra
   // do vocabulário da casa.
-  const produtos = [
-    ...cardapio.nomesDeFamilia,
-    ...cardapio.lancamentos.map((l) => l.produto),
-    ...PRODUTOS_DA_CASA,
-  ];
+  const produtos = [...cardapio.nomesDeFamilia, ...PRODUTOS_DA_CASA];
   if (!citaAlgumDe(corpo, produtos)) {
     motivos.push(
       'não diz EM QUE PRODUTO. Nomeie a família ou o tipo (capinha, térmico, camiseta, caneca…) — ' +
@@ -115,7 +111,10 @@ export function julgar(rec: Recomendacao, cardapio: Cardapio, ctx?: ContextoDoJu
 
   // 3. Evidência numérica: a recomendação nasce de um número ou não nasce.
   if (!TEM_NUMERO.test(rec.por_que)) {
-    motivos.push('o "por quê" não tem um número. Cole a evidência da investigação — unidades, receita ou variação.');
+    motivos.push(
+      'o "por quê" não tem um número. Cole a evidência da rodada: leituras de procura e a variação em 14 dias, ' +
+      'quantos itens a concorrência lançou na categoria, o preço médio praticado, ou em quantos dias é o jogo.',
+    );
   }
 
   // 4. Prazo executável.

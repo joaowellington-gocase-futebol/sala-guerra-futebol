@@ -1,55 +1,70 @@
-// O PLACAR: o que aconteceu com o que a mesa recomendou da última vez.
+// O PLACAR — o que aconteceu com o que a mesa recomendou da última vez.
 //
-// Isto é o que faltava pra mesa deixar de ser opinião recorrente e virar
-// trabalho. Até aqui ela recomendava e ninguém nunca voltava pra ver no que
-// deu — então nada a corrigia: uma recomendação ruim custava exatamente o
-// mesmo que uma boa, e por isso não havia pressão nenhuma pra ser específica.
+// É o que impede a mesa de ser opinião recorrente: toda reunião ABRE prestando
+// contas da anterior. Sem isso, uma recomendação ruim custa o mesmo que uma
+// boa, e nada pressiona por qualidade.
 //
-// Agora toda reunião ABRE prestando contas da anterior, com número do banco e
-// não com memória do modelo: a recomendação citava um clube (o juiz obriga),
-// então dá pra medir o que aquele clube vendeu desde então contra a janela
-// equivalente anterior.
+// O QUE MUDOU EM 18/09/2026: a medição era feita na venda própria do datamart.
+// Agora é feita na PROCURA — quantas pessoas foram ler sobre aquele clube nos
+// 14 dias depois da recomendação, contra os 14 anteriores. É pública, é
+// verificável no link, e mede o que a recomendação de fato apostou: que aquele
+// clube ia puxar atenção.
 //
-// O que isto NÃO é: prova de causalidade. Se o Ceará subiu depois da
-// recomendação, pode ter sido o clássico, e não a mesa. O texto abaixo diz
-// isso na cara em vez de fingir um mérito que não dá pra provar — é o tipo de
-// número que a Rafa recusaria se viesse embrulhado como vitória.
+// O que isto NÃO é: prova de que a casa vendeu. É a régua do acerto da leitura
+// de mercado, não do caixa — e o texto abaixo diz isso na cara, em vez de
+// fingir um mérito que não dá pra provar daqui.
 
 import type { Env } from './aiproxy';
-import { executarConsulta } from './consulta';
-import { CLUBES } from './fontes/cardapio';
+import { procuraDeUmClube, ARTIGO_DO_CLUBE } from './web/procura';
 import { normalizar } from './juiz';
 
 export interface RecomendacaoMedida {
   o_que: string;
   quando: string;
   clube: string | null;
-  un_depois: number | null;
-  un_antes: number | null;
+  procura_depois: number | null;
   variacao_pct: number | null;
+  link: string;
 }
 
 export interface Placar {
   houve: boolean;
   dias: number;
   medidas: RecomendacaoMedida[];
-  erro?: string;
 }
 
-/** Acha o clube citado no texto da recomendação. É o que torna a medição possível. */
+/** Acha o clube citado no texto da recomendação — é o que torna a medição possível. */
 export function clubeCitado(texto: string): string | null {
   const t = normalizar(texto);
-  for (const c of CLUBES) {
-    // O regex do cardápio já cobre grafia com e sem acento.
-    if (new RegExp(normalizar(c.regex), 'i').test(t)) return c.nome;
+  for (const nome of Object.keys(ARTIGO_DO_CLUBE)) {
+    if (t.includes(normalizar(nome))) return nome;
   }
   return null;
 }
 
 /**
- * Mede as recomendações da ata anterior. Uma consulta só, agregando por clube
- * nas duas janelas — a de depois da recomendação e a de mesmo tamanho antes.
+ * Os clubes que a mesa já usou como tema nas últimas rodadas.
+ *
+ * POR QUE (João, 16/09/2026): "eles estão o tempo todo falando de Ceará e
+ * Fortaleza, porque foi uma série de teste que eu fiz". Um agente não percebe
+ * que está repetindo; o histórico percebe.
  */
+export async function clubesJaBatidos(env: Env, quantasAtas = 5): Promise<string[]> {
+  const q = await env.DB.query('SELECT tema, recomendacoes FROM atas ORDER BY quando DESC LIMIT ?', [quantasAtas]);
+  const achados: string[] = [];
+  for (const linha of q.rows) {
+    let recs: { o_que?: string }[] = [];
+    try { recs = JSON.parse(String(linha.recomendacoes || '[]')); } catch { recs = []; }
+    for (const t of [String(linha.tema || ''), ...recs.map((r) => String(r.o_que || ''))]) {
+      const c = clubeCitado(t);
+      if (c) achados.push(c);
+    }
+  }
+  const contagem = new Map<string, number>();
+  for (const c of achados) contagem.set(c, (contagem.get(c) || 0) + 1);
+  return [...contagem.entries()].filter(([, n]) => n >= 2).map(([c]) => c);
+}
+
 export async function medirRecomendacoesAnteriores(env: Env): Promise<Placar> {
   const q = await env.DB.query(
     "SELECT quando, recomendacoes FROM atas WHERE recomendacoes IS NOT NULL AND recomendacoes != '[]' ORDER BY quando DESC LIMIT 1",
@@ -64,120 +79,45 @@ export async function medirRecomendacoesAnteriores(env: Env): Promise<Placar> {
 
   const quando = String(linha.quando || '');
   const dias = Math.max(1, Math.round((Date.now() - new Date(quando).getTime()) / 86400000));
-  // Janela curta demais não mede nada: menos de um dia inteiro, a resposta
-  // honesta é "ainda não dá pra saber".
-  if (dias < 1) {
-    return { houve: true, dias, medidas: recs.map((r) => ({
-      o_que: String(r.o_que || ''), quando, clube: clubeCitado(String(r.o_que || '')),
-      un_depois: null, un_antes: null, variacao_pct: null,
-    })) };
-  }
 
+  // Uma série por clube citado, sem repetir clube.
   const clubes = [...new Set(recs.map((r) => clubeCitado(String(r.o_que || ''))).filter(Boolean))] as string[];
-  if (!clubes.length) {
-    return { houve: true, dias, medidas: recs.map((r) => ({
-      o_que: String(r.o_que || ''), quando, clube: null, un_depois: null, un_antes: null, variacao_pct: null,
-    })) };
-  }
-
-  const regexPorNome = new Map(CLUBES.map((c) => [c.nome, c.regex]));
-  const caseClube = 'CASE ' + clubes
-    .map((n) => `WHEN li.product_name ~* '${regexPorNome.get(n)}' THEN '${n.replace(/'/g, "''")}'`)
-    .join(' ') + " ELSE 'outro' END";
-
-  const sql = `
-SELECT ${caseClube} AS clube,
-  SUM(CASE WHEN li.item_created_at >= current_date - ${dias} THEN li.item_quantity ELSE 0 END) AS un_depois,
-  SUM(CASE WHEN li.item_created_at >= current_date - ${dias * 2} AND li.item_created_at < current_date - ${dias} THEN li.item_quantity ELSE 0 END) AS un_antes
-FROM silver.line_items li
-WHERE li.item_created_at >= current_date - ${dias * 2}
-  AND li.product_name ~* '${clubes.map((n) => regexPorNome.get(n)).join('|')}'
-GROUP BY 1
-LIMIT 30`;
-
-  const r = await executarConsulta(env, sql);
-  if (!r.ok) {
-    return {
-      houve: true, dias, erro: r.erro,
-      medidas: recs.map((x) => ({
-        o_que: String(x.o_que || ''), quando, clube: clubeCitado(String(x.o_que || '')),
-        un_depois: null, un_antes: null, variacao_pct: null,
-      })),
-    };
-  }
-
-  const porClube = new Map<string, { depois: number; antes: number }>();
-  for (const l of r.linhas) {
-    porClube.set(String(l[0]), { depois: Number(l[1] ?? 0), antes: Number(l[2] ?? 0) });
-  }
+  const series = new Map<string, Awaited<ReturnType<typeof procuraDeUmClube>>>();
+  for (const c of clubes.slice(0, 3)) series.set(c, await procuraDeUmClube(c));
 
   return {
     houve: true, dias,
-    medidas: recs.map((x) => {
-      const o_que = String(x.o_que || '');
+    medidas: recs.map((r) => {
+      const o_que = String(r.o_que || '');
       const clube = clubeCitado(o_que);
-      const medida = clube ? porClube.get(clube) : undefined;
-      const depois = medida?.depois ?? null;
-      const antes = medida?.antes ?? null;
+      const s = clube ? series.get(clube) : null;
       return {
-        o_que, quando, clube, un_depois: depois, un_antes: antes,
-        variacao_pct: depois !== null && antes ? Math.round(((depois - antes) / antes) * 100) : null,
+        o_que, quando, clube,
+        procura_depois: s?.views_14d ?? null,
+        variacao_pct: s?.variacao_pct ?? null,
+        link: s?.link || '',
       };
     }),
   };
 }
 
-/**
- * Os clubes que a mesa já usou como tema nas últimas rodadas.
- *
- * POR QUE (João, 16/09/2026): "eles estão o tempo todo falando de Ceará e
- * Fortaleza, porque foi uma série de teste que eu fiz". A mesa tinha ficado
- * presa num par de clubes — parte por causa dos exemplos que eu escrevi nos
- * prompts, parte porque nada no sistema notava a repetição. Um agente não
- * percebe que está repetindo; o histórico percebe.
- */
-export async function clubesJaBatidos(env: Env, quantasAtas = 5): Promise<string[]> {
-  const q = await env.DB.query(
-    'SELECT tema, recomendacoes FROM atas ORDER BY quando DESC LIMIT ?', [quantasAtas]);
-  const achados: string[] = [];
-  for (const linha of q.rows) {
-    let recs: { o_que?: string }[] = [];
-    try { recs = JSON.parse(String(linha.recomendacoes || '[]')); } catch { recs = []; }
-    const textos = [String(linha.tema || ''), ...recs.map((r) => String(r.o_que || ''))];
-    for (const t of textos) {
-      const c = clubeCitado(t);
-      if (c) achados.push(c);
-    }
-  }
-  // Só conta como "batido" quem apareceu mais de uma vez: um clube citado numa
-  // rodada só é assunto normal, não vício.
-  const contagem = new Map<string, number>();
-  for (const c of achados) contagem.set(c, (contagem.get(c) || 0) + 1);
-  return [...contagem.entries()].filter(([, n]) => n >= 2).map(([c]) => c);
-}
-
-/** O texto que abre a reunião. Curto, e sem se dar medalha. */
 export function formatarPlacar(p: Placar): string {
   if (!p.houve) {
     return 'PRESTAÇÃO DE CONTAS: esta é a primeira rodada com recomendação — não há nada da véspera pra cobrar ainda.';
   }
   const linhas = p.medidas.map((m) => {
-    if (m.un_depois === null) {
-      return `- "${m.o_que}" → não deu pra medir` +
-        (m.clube ? ' (o número do clube não voltou)' : ' (a recomendação não citava clube, então não há o que medir)');
+    if (m.procura_depois === null) {
+      return `- "${m.o_que.slice(0, 120)}" → sem medição` +
+        (m.clube ? ' (a série de procura do clube não voltou)' : ' (a recomendação não citava clube, então não há o que medir)');
     }
-    const variacao = m.variacao_pct === null
-      ? 'sem base anterior pra comparar'
-      : `${m.variacao_pct > 0 ? '+' : ''}${m.variacao_pct}% contra os ${p.dias} dia(s) anteriores`;
-    return `- "${m.o_que}" → ${m.clube}: ${m.un_depois} un nos últimos ${p.dias} dia(s) (${variacao})`;
+    const v = m.variacao_pct === null ? 'sem base anterior' : `${m.variacao_pct > 0 ? '+' : ''}${m.variacao_pct}% em 14 dias`;
+    return `- "${m.o_que.slice(0, 120)}" → ${m.clube}: ${m.procura_depois} leituras nos últimos 14d (${v}) · ${m.link}`;
   }).join('\n');
 
   return (
-    `PRESTAÇÃO DE CONTAS — o que a mesa recomendou na última reunião e o que aconteceu depois:\n${linhas}\n` +
-    (p.erro ? `(a medição falhou: ${p.erro})\n` : '') +
-    'ATENÇÃO AO LER ISTO: o número é do CLUBE inteiro, não da peça recomendada, e a variação pode ter vindo ' +
-    'do jogo, da data ou de qualquer outra coisa. Não trate como prova de que a mesa acertou. O uso certo é ' +
-    'outro: se algo que vocês empurraram não se mexeu, isso é motivo pra mudar de ideia hoje — e dizer que ' +
-    'mudou.'
+    `PRESTAÇÃO DE CONTAS — o que a mesa recomendou há ${p.dias} dia(s) e o que a PROCURA fez desde então:\n${linhas}\n` +
+    'COMO LER ISTO: procura não é venda, e a variação pode ter vindo do jogo, da notícia ou de qualquer outra ' +
+    'coisa. Não trate como prova de acerto. O uso certo é o contrário: se o clube que vocês empurraram nem se ' +
+    'mexeu na atenção do público, isso é motivo pra mudar de ideia hoje — e dizer que mudou.'
   );
 }

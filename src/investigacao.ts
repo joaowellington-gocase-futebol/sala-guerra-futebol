@@ -1,44 +1,46 @@
 // A mesa de investigação de mercado.
 //
-// O QUE MUDOU E POR QUÊ (correção do João, e ele tinha razão duas vezes):
+// COMO ISTO FUNCIONAVA E POR QUE MUDOU (João, 18/09/2026):
 //
-// 1. A mesa não existe pra fazer capinha pro jogo de domingo. Ela existe pra
-//    ENTENDER COMO O MERCADO ANDA. O antigo fluxo era uma linha de produção
-//    (oportunidade → briefing → aprovação → tarefa) e por isso toda reunião
-//    terminava num produto específico. Agora termina em ENTENDIMENTO: o que
-//    passamos a acreditar sobre o mercado, e o que caiu por terra.
+// A versão anterior fazia a Rafa ESCREVER SQL contra a venda própria da casa.
+// A ideia era boa no papel — o agente formula a pergunta e vai buscar a
+// resposta — e foi um desastre na prática por duas razões:
 //
-// 2. Eles não pensavam porque só recebiam o dado que eu tinha decidido buscar.
-//    Comentar um relatório pronto não é pensar. Agora a mesa levanta várias
-//    hipóteses CONCORRENTES, escreve o próprio SQL pra testar cada uma contra
-//    a venda real, lê o que voltou e conclui — inclusive concluindo que estava
-//    errada. Hipótese refutada é resultado tão bom quanto confirmada, e é
-//    registrada com o mesmo destaque.
+//   Técnica: dependia de o modelo produzir SQL válido E de o datamart
+//   responder dentro de 40 segundos. Quando qualquer um dos dois falhava, a
+//   rodada inteira ficava sem número e a ata terminava em "não há o que
+//   recomendar". O João recebeu essa ata por dias seguidos.
 //
-// 3. (15/09) O entendimento continua sendo o lastro, mas ele parou de ser o
-//    FIM da reunião: a leitura daqui alimenta a rodada de DIREÇÃO, onde a mesa
-//    diz ao João o que fazer com o que descobriu. Investigar sem recomendar
-//    era a queixa dele — "vocês me explicam o mercado e não me dão direção".
-//    Ver src/direcao.ts e a rodada 6 de src/reuniao.ts.
+//   De fundo, e mais importante: mesmo funcionando, media a Gocase contra ela
+//   mesma. "Não precisamos do número de vendas, nem sei como tá sendo
+//   calculado isso — podemos mudar a lógica pra trazer dados comerciais no
+//   geral, tipo procura e consumo masculino." Ele tem razão: o que decide uma
+//   coleção é o mercado, não o retrovisor da própria loja.
 //
-// O que sobrevive entre as rodadas são as CRENÇAS (tabela `crencas`): o modelo
-// de mundo da mesa, que cresce, é revisado e às vezes desmorona. Toda
-// investigação nova é obrigada a tentar derrubar pelo menos uma que está de pé
-// — senão a mesa vira um clube de gente que concorda consigo mesma.
+// Agora a mesa escolhe MEDIÇÕES de um cardápio (src/mercado/metricas.ts) e o
+// código faz a conta sobre dados já coletados — procura real na Wikipédia,
+// oferta e preço das lojas do nicho, presença do tema na imprensa, na conversa
+// da torcida e na prateleira. Duas chamadas de IA no lugar de até dezesseis, e
+// é impossível uma rodada terminar sem número.
+//
+// O que sobrevive entre as rodadas continua sendo as CRENÇAS: o modelo de
+// mundo da casa, que cresce, é revisado e às vezes cai.
 
 import type { Env } from './aiproxy';
-import { chamarAgente, chamarAgenteTexto } from './aiproxy';
-import { executarConsulta, formatarResultado, DICIONARIO } from './consulta';
+import { chamarAgente } from './aiproxy';
 import { PESSOAS, formatarPessoa } from './pessoas';
+import { catalogoDeMetricas, medir, type PedidoDeTeste, type NomeDaMetrica } from './mercado/metricas';
+import type { Mundo } from './web/mundo';
+import type { Vitrine } from './web/vitrine';
 
 export interface Teste {
   pergunta: string;
   hipotese: string;
-  sql: string;
-  linhas: number;
+  /** A medição escolhida, em texto, pra ata poder mostrar o que foi feito. */
+  medicao: string;
+  numeros: string;
   veredito: 'confirma' | 'refuta' | 'inconclusivo' | 'falhou';
   o_que_o_numero_diz: string;
-  tentativas: number;
 }
 
 export interface Crenca { id?: number; afirmacao: string; evidencia: string; confianca: number }
@@ -53,6 +55,9 @@ export interface ResultadoInvestigacao {
 }
 
 const MAX_PERGUNTAS = 4;
+const METRICAS_VALIDAS: NomeDaMetrica[] = [
+  'procura_do_clube', 'comparar_procura', 'oferta_da_categoria', 'comparar_oferta', 'presenca_do_tema', 'agenda_do_clube',
+];
 
 // ── As crenças que estão de pé ───────────────────────────────────────────
 
@@ -74,226 +79,112 @@ function formatarCrencas(cs: { afirmacao: string; evidencia: string; confianca: 
   ).join('\n');
 }
 
-// ── 1. As perguntas ──────────────────────────────────────────────────────
+// ── 1. As perguntas, já na forma de medição ──────────────────────────────
 
 async function proporPerguntas(
-  env: Env, contexto: string, crencas: string, naoRepita: string, direcao: string,
-): Promise<{ pergunta: string; hipotese: string; por_que_importa: string }[]> {
+  env: Env, contexto: string, crencas: string, naoRepita: string, menu: string, direcao: string,
+): Promise<PedidoDeTeste[]> {
   const r = await chamarAgente(
     env,
     'Você é a mesa de inteligência de mercado da Gocase para a linha de futebol — Téo (olheiro), Rafa (dados), ' +
     'Nina (criação), Caio (posicionamento) e Val (operação) pensando juntos.\n\n' +
-    'O TRABALHO DE VOCÊS NÃO É decidir que produto lançar para um jogo específico. É ENTENDER COMO ESTE ' +
-    'MERCADO SE COMPORTA — e, no fim da reunião, dizer ao João o que fazer com isso. Esta etapa aqui é a ' +
-    'primeira metade: as perguntas.\n\n' +
-    'Levante de 3 a ' + MAX_PERGUNTAS + ' PERGUNTAS sobre o mercado, para serem testadas AGORA contra a venda ' +
-    'real. Cada uma vem com a sua hipótese: o que vocês apostam que vai aparecer no número.\n\n' +
-    direcao +
-    'O QUE FAZ UMA PERGUNTA PRESTAR AQUI:\n' +
-    '• Ela é respondível por uma consulta à base de venda (um item vendido por linha, com produto, quantidade, ' +
-    'preço, custo, categoria, tipo, cor, aparelho e data).\n' +
-    '• Ela compara. "Quanto vendeu o Flamengo" não ensina nada; "clube grande e clube pequeno têm curva ' +
-    'diferente depois de lançar uniforme" ensina.\n' +
-    '• As perguntas são DIFERENTES ENTRE SI — ângulos que competem, não a mesma ideia reescrita. Se todas ' +
-    'olham para o mesmo eixo, vocês vão confirmar o que já achavam.\n' +
-    '• Pelo menos UMA tem que TENTAR DERRUBAR uma das crenças que a mesa já tem. Mesa que só busca confirmação ' +
-    'não é mesa de inteligência, é torcida.\n' +
-    '• Se a resposta puder mudar uma decisão do João, ela vale mais. Pergunta que só rende curiosidade não ' +
-    'compete com pergunta que rende direção.\n' +
-    '• Nada de pergunta cuja resposta você já sabe, e nada de pergunta genérica ("como está o mercado?").\n\n' +
+    'O TRABALHO: entender o mercado em que a casa vende — procura do público, oferta e preço da concorrência, ' +
+    'e o que o consumidor masculino está consumindo agora. A partir disso, o João decide o que a área faz.\n\n' +
+    direcao + menu +
+    '\n\n━━ LEVANTE DE 3 A ' + MAX_PERGUNTAS + ' PERGUNTAS ━━\n' +
+    'Cada uma vira uma medição da lista acima. Uma pergunta que não caiba numa medição não serve aqui — ' +
+    'reescreva até caber.\n\n' +
+    'O QUE FAZ UMA PERGUNTA PRESTAR:\n' +
+    '• Ela COMPARA. "Quanta procura tem o Flamengo" ensina pouco; "a procura do Flamengo cresce mais que a do ' +
+    'Grêmio na semana do clássico" ensina.\n' +
+    '• Ela pode MUDAR UMA DECISÃO. Se a resposta não muda nada do que a casa faria, é curiosidade.\n' +
+    '• As perguntas são DIFERENTES ENTRE SI — ângulos que competem, não a mesma ideia reescrita.\n' +
+    '• Pelo menos UMA tem que tentar DERRUBAR uma crença que a mesa já tem. Mesa que só busca confirmação é ' +
+    'torcida, não inteligência.\n' +
+    '• Território virgem vale ouro: medir a presença de um tema que talvez ninguém esteja explorando é uma ' +
+    'pergunta excelente, e o resultado zero é uma resposta ÚTIL, não uma falha.\n\n' +
     'O QUE A MESA JÁ ACREDITA (e você precisa desafiar):\n' + crencas + naoRepita +
-    '\n\nResponda APENAS {"perguntas":[{"pergunta":"..","hipotese":"o que apostamos que o número vai mostrar",' +
-    '"por_que_importa":"o que muda no negócio se isso for verdade"}]}',
+    '\n\nResponda APENAS {"perguntas":[{"pergunta":"..","hipotese":"o que você aposta que o número vai mostrar",' +
+    '"por_que_importa":"o que muda no negócio se for verdade","metrica":"<uma da lista>","alvo_a":"..",' +
+    '"alvo_b":"<só quando a medição pedir dois>"}]}',
     'Sinais e contexto de agora:\n' + contexto,
     undefined,
     0.75,
   );
+
   const d = r.ok ? (r.dados as any) : null;
   const lista = Array.isArray(d?.perguntas) ? d.perguntas : [];
   return lista.slice(0, MAX_PERGUNTAS).map((p: any) => ({
     pergunta: String(p?.pergunta || '').slice(0, 300),
     hipotese: String(p?.hipotese || '').slice(0, 300),
     por_que_importa: String(p?.por_que_importa || '').slice(0, 300),
-  })).filter((p: any) => p.pergunta);
+    metrica: (METRICAS_VALIDAS.includes(p?.metrica) ? p.metrica : 'presenca_do_tema') as NomeDaMetrica,
+    alvo_a: String(p?.alvo_a || '').slice(0, 120),
+    alvo_b: p?.alvo_b ? String(p.alvo_b).slice(0, 120) : undefined,
+  })).filter((p: PedidoDeTeste) => p.pergunta && p.alvo_a);
 }
 
-// ── 2. O teste: a Rafa escreve o SQL, roda, e lê o que voltou ────────────
+// ── 2. A leitura: o modelo conclui em cima dos números que o código deu ──
 
-/**
- * Tira o SQL de qualquer formato em que o modelo tenha resolvido responder.
- *
- * POR QUE ISTO EXISTE (João, 16/09/2026: "3 de 3 consultas não rodaram — não
- * consegui escrever a consulta"): a versão anterior pedia o SQL DENTRO de um
- * JSON (`{"sql":"..."}`). SQL é multilinha por natureza; quando o modelo emite
- * a quebra de linha de verdade em vez de \n, o JSON fica inválido, o cliente
- * cai no fallback de "resposta crua" e o campo `sql` chega vazio. Resultado: a
- * consulta nunca era escrita, nenhuma hipótese era testada, a mesa nunca tinha
- * número — e então era obrigada a dizer que não tinha o que recomendar. Todas
- * as atas vazias de dias seguidos passavam por aqui.
- *
- * Agora o SQL é pedido em texto puro, e este extrator ainda cobre as formas
- * em que ele costuma vir embrulhado.
- */
-export function extrairSql(bruto: unknown): string {
-  const texto = typeof bruto === 'string'
-    ? bruto
-    : String((bruto as any)?.sql || (bruto as any)?.texto || (bruto as any)?.resposta_crua || '');
-  if (!texto.trim()) return '';
-
-  // ```sql ... ```
-  const cerca = texto.match(/```(?:sql)?\s*([\s\S]*?)```/i);
-  if (cerca?.[1]?.trim()) return cerca[1].trim();
-
-  // {"sql": "..."} que não deu pra parsear
-  const campo = texto.match(/"sql"\s*:\s*"([\s\S]*?)"\s*[,}]/);
-  if (campo?.[1]?.trim()) {
-    return campo[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\t/g, ' ').trim();
-  }
-
-  // O texto já é a consulta: corta o que vier antes do SELECT/WITH.
-  const inicio = texto.search(/\b(select|with)\b/i);
-  if (inicio >= 0) return texto.slice(inicio).trim();
-
-  return '';
+interface Conclusao {
+  vereditos: { veredito: string; o_que_o_numero_diz: string }[];
+  passamosAAcreditar: Crenca[];
+  caiuPorTerra: { afirmacao: string; por_que: string }[];
+  emAberto: string[];
+  leitura: string;
 }
 
-interface SqlEscrito { sql: string; erro?: string }
-
-/**
- * A Rafa escreve a consulta. Em TEXTO, não em JSON — ver extrairSql acima.
- * Quando falha, devolve o motivo de verdade, porque "não consegui escrever a
- * consulta" sem causa foi exatamente o que escondeu este bug por dias.
- */
-async function escreverSql(
-  env: Env, pergunta: string, hipotese: string, erroAnterior?: string, sqlAnterior?: string,
-): Promise<SqlEscrito> {
-  const r = await chamarAgenteTexto(
-    env,
-    formatarPessoa('analista') +
-    '\n\n━━ O QUE VOCÊ ESTÁ FAZENDO AGORA ━━\n' +
-    'A mesa levantou uma pergunta sobre o mercado e você vai TESTAR contra a venda real. Escreva UMA consulta ' +
-    'Postgres que responda essa pergunta de forma que dê pra concluir alguma coisa — com comparação, não com ' +
-    'número solto.\n' + DICIONARIO +
-    (erroAnterior
-      ? `\n\n⚠ VOCÊ JÁ TENTOU E FALHOU. Sua consulta anterior foi:\n${sqlAnterior}\n\nO banco respondeu: ${erroAnterior}\n` +
-        'Conserte. Se o erro for de coluna que não existe, use só as colunas do dicionário acima.'
-      : '') +
-    '\n\n━━ COMO RESPONDER ━━\n' +
-    'Devolva SOMENTE a consulta SQL, em texto puro. Nada de JSON, nada de explicação, nada de comentário, ' +
-    'nada de crase. A primeira palavra da sua resposta tem que ser SELECT ou WITH, e a última tem que ser o ' +
-    'fim da consulta. Pode quebrar linha à vontade — é SQL, é pra ser legível.',
-    [{ role: 'user', content: `Pergunta: ${pergunta}\nHipótese da mesa: ${hipotese}` }],
-    0.25,
-  );
-
-  if (!r.ok) return { sql: '', erro: `o modelo não respondeu (${r.erro})` };
-  const sql = extrairSql(r.dados);
-  if (!sql) {
-    const amostra = String((r.dados as any)?.texto || '').slice(0, 160).replace(/\s+/g, ' ');
-    return { sql: '', erro: `o modelo respondeu sem consulta utilizável${amostra ? ` — começava com: "${amostra}"` : ''}` };
-  }
-  return { sql };
-}
-
-async function testarPergunta(
-  env: Env, p: { pergunta: string; hipotese: string },
-): Promise<Teste> {
-  const primeira = await escreverSql(env, p.pergunta, p.hipotese);
-  let sql = primeira.sql;
-  let consulta = sql
-    ? await executarConsulta(env, sql)
-    : { ok: false, erro: primeira.erro || 'não consegui escrever a consulta', colunas: [], linhas: [], linhasRetornadas: 0 };
-  let tentativas = 1;
-
-  // Duas chances extras com o erro na mão — é o que uma pessoa faria, e é onde
-  // mora boa parte do "pensar de verdade": ler o erro e corrigir. Eram duas
-  // tentativas no total; virou três porque a rodada inteira depende disto, e
-  // uma reunião sem número nenhum não vale o que custa.
-  for (let n = 0; n < 2 && !consulta.ok; n++) {
-    const nova = await escreverSql(env, p.pergunta, p.hipotese, consulta.erro, sql);
-    tentativas += 1;
-    if (!nova.sql) {
-      consulta = { ok: false, erro: nova.erro || consulta.erro, colunas: [], linhas: [], linhasRetornadas: 0 };
-      continue;
-    }
-    sql = nova.sql;
-    consulta = await executarConsulta(env, sql);
-  }
-
-  if (!consulta.ok) {
-    return {
-      pergunta: p.pergunta, hipotese: p.hipotese, sql, linhas: 0, tentativas,
-      veredito: 'falhou',
-      o_que_o_numero_diz: `Não consegui testar: ${consulta.erro}`,
-    };
-  }
+async function concluir(
+  env: Env,
+  medidos: { pedido: PedidoDeTeste; numeros: string }[],
+  crencas: string,
+): Promise<Conclusao> {
+  const vazio: Conclusao = { vereditos: [], passamosAAcreditar: [], caiuPorTerra: [], emAberto: [], leitura: 'Não consegui consolidar esta rodada.' };
+  if (!medidos.length) return vazio;
 
   const r = await chamarAgente(
     env,
     formatarPessoa('analista') +
-    '\n\n━━ AGORA LEIA O QUE VOLTOU ━━\n' +
-    'Você testou uma hipótese da mesa contra a venda real. Olhe as linhas e conclua, com a honestidade que é ' +
-    'a sua marca registrada.\n' +
-    'VEREDITO: "confirma" (o número sustenta a hipótese), "refuta" (o número diz o contrário — e isto é um ' +
-    'resultado ÓTIMO, não um fracasso; a mesa aprende mais com hipótese derrubada do que com confirmada), ou ' +
-    '"inconclusivo" (não deu pra saber com o que voltou, e forçar seria mentir).\n' +
-    'Em "o_que_o_numero_diz" escreva UMA a TRÊS frases suas, com os números concretos que você viu. Sem ' +
-    'adjetivo vazio. Se refutou, diga o que o número mostrou NO LUGAR da hipótese — é essa parte que vale ouro.\n' +
-    'Cuidado com amostra pequena: se a comparação está apoiada em pouquíssimas unidades, o veredito é ' +
-    '"inconclusivo" mesmo que o número pareça bonito. Você já se queimou com isso.\n' +
-    '\nResponda APENAS {"veredito":"confirma|refuta|inconclusivo","o_que_o_numero_diz":"..."}',
-    `Pergunta: ${p.pergunta}\nHipótese: ${p.hipotese}\n\nSQL que você escreveu:\n${consulta.sqlExecutado}\n\nO que voltou:\n${formatarResultado(consulta)}`,
-    undefined,
-    0.2,
-  );
-  const d = r.ok ? (r.dados as any) : null;
-  const v = String(d?.veredito || 'inconclusivo');
-  return {
-    pergunta: p.pergunta, hipotese: p.hipotese, sql: consulta.sqlExecutado || sql,
-    linhas: consulta.linhasRetornadas, tentativas,
-    veredito: (['confirma', 'refuta', 'inconclusivo'].includes(v) ? v : 'inconclusivo') as Teste['veredito'],
-    o_que_o_numero_diz: String(d?.o_que_o_numero_diz || 'não consegui ler o resultado').slice(0, 700),
-  };
-}
-
-// ── 3. O que passamos a acreditar ────────────────────────────────────────
-
-async function consolidar(
-  env: Env, testes: Teste[], crencas: string,
-): Promise<{ passamosAAcreditar: Crenca[]; caiuPorTerra: { afirmacao: string; por_que: string }[]; emAberto: string[]; leitura: string }> {
-  const vazio = { passamosAAcreditar: [], caiuPorTerra: [], emAberto: [], leitura: 'Não consegui consolidar esta rodada.' };
-  if (!testes.length) return vazio;
-
-  const r = await chamarAgente(
-    env,
-    'Você está fechando a parte de INVESTIGAÇÃO de uma rodada da mesa de inteligência de mercado da Gocase ' +
-    '(linha de futebol). A mesa se fez perguntas sobre COMO O MERCADO ANDA e testou cada uma contra a venda ' +
-    'real. Seu trabalho é dizer o que a casa passa a entender.\n\n' +
-    'REGRAS:\n' +
-    '• "passamos_a_acreditar": só o que o NÚMERO sustenta, cada item com a evidência numérica colada e uma ' +
-    'confiança de 0 a 1. Se nada foi confirmado, devolva lista vazia — sem prêmio de consolação.\n' +
-    '• "caiu_por_terra": o que foi REFUTADO, incluindo crenças antigas da mesa que o teste derrubou. Esta é a ' +
-    'parte mais valiosa da rodada: escreva com clareza o que a casa acreditava e o que o número mostrou no ' +
-    'lugar.\n' +
-    '• "em_aberto": o que ficou inconclusivo e merece ser testado de outro jeito na próxima — diga QUE OUTRO ' +
-    'JEITO.\n' +
-    '• "leitura": 3 a 5 frases, em português falado, como alguém explicando para o dono do negócio o que está ' +
-    'acontecendo no mercado agora. Sem jargão, sem "recomenda-se". Se a rodada não ensinou nada, diga isso — é ' +
-    'uma resposta honesta e acontece.\n' +
-    '• Aqui é leitura de mercado, não plano de produto: a RECOMENDAÇÃO vem depois, numa etapa própria da ' +
-    'reunião, e é lá que a mesa diz ao João o que fazer. Não antecipe plano nem cronograma neste campo.\n\n' +
-    'O QUE A MESA JÁ ACREDITAVA ANTES DESTA RODADA:\n' + crencas +
-    '\n\nResponda APENAS {"passamos_a_acreditar":[{"afirmacao":"..","evidencia":"..","confianca":0.0}],' +
-    '"caiu_por_terra":[{"afirmacao":"..","por_que":".."}],"em_aberto":[".."],"leitura":".."}',
-    testes.map((t) =>
-      `PERGUNTA: ${t.pergunta}\nHIPÓTESE: ${t.hipotese}\nVEREDITO: ${t.veredito}\nO QUE O NÚMERO DISSE: ${t.o_que_o_numero_diz}`,
+    '\n\n━━ AGORA LEIA OS NÚMEROS ━━\n' +
+    'A mesa escolheu as medições e o sistema fez as contas. Os números abaixo são reais e já estão prontos — ' +
+    'você não precisa buscar nada, só ler com a honestidade que é a sua marca.\n\n' +
+    'Para CADA pergunta, dê um veredito:\n' +
+    '• "confirma" — o número sustenta a hipótese;\n' +
+    '• "refuta" — o número diz o contrário, e isto é um resultado ÓTIMO: a casa aprende mais com hipótese ' +
+    'derrubada do que com confirmada;\n' +
+    '• "inconclusivo" — o número não resolve a pergunta, e forçar seria mentir.\n' +
+    'Em "o_que_o_numero_diz", UMA a TRÊS frases suas com os números concretos. Sem adjetivo vazio. Se refutou, ' +
+    'diga o que apareceu NO LUGAR da hipótese.\n' +
+    'Cuidado com base pequena: comparação apoiada em pouquíssimos itens é "inconclusivo" mesmo quando o número ' +
+    'parece bonito.\n\n' +
+    '━━ DEPOIS, FECHE A RODADA ━━\n' +
+    '• "passamos_a_acreditar": só o que o número sustenta, cada item com a evidência numérica colada e uma ' +
+    'confiança de 0 a 1. Nada confirmado? Lista vazia, sem prêmio de consolação.\n' +
+    '• "caiu_por_terra": o que foi refutado, inclusive crença antiga que caiu. É a parte mais valiosa.\n' +
+    '• "em_aberto": o que ficou sem resposta e merece outra medição na próxima — diga QUAL.\n' +
+    '• "leitura": 3 a 5 frases, em português falado, explicando ao dono do negócio o que está acontecendo no ' +
+    'mercado agora. Sem jargão, sem "recomenda-se". A recomendação vem depois, em etapa própria.\n\n' +
+    'O QUE A MESA ACREDITAVA ANTES DESTA RODADA:\n' + crencas +
+    '\n\nResponda APENAS {"vereditos":[{"veredito":"confirma|refuta|inconclusivo","o_que_o_numero_diz":".."}],' +
+    '"passamos_a_acreditar":[{"afirmacao":"..","evidencia":"..","confianca":0.0}],' +
+    '"caiu_por_terra":[{"afirmacao":"..","por_que":".."}],"em_aberto":[".."],"leitura":".."} ' +
+    '— um veredito por pergunta, na mesma ordem em que elas aparecem.',
+    medidos.map((x, i) =>
+      `PERGUNTA ${i + 1}: ${x.pedido.pergunta}\nHIPÓTESE: ${x.pedido.hipotese}\n` +
+      `MEDIÇÃO (${x.pedido.metrica}: ${x.pedido.alvo_a}${x.pedido.alvo_b ? ` × ${x.pedido.alvo_b}` : ''})\n` +
+      `NÚMEROS: ${x.numeros}`,
     ).join('\n\n———\n\n'),
     undefined,
     0.3,
   );
+
   if (!r.ok) return vazio;
   const d = r.dados as any;
   return {
+    vereditos: (Array.isArray(d?.vereditos) ? d.vereditos : []).map((v: any) => ({
+      veredito: String(v?.veredito || 'inconclusivo'),
+      o_que_o_numero_diz: String(v?.o_que_o_numero_diz || '').slice(0, 700),
+    })),
     passamosAAcreditar: (Array.isArray(d?.passamos_a_acreditar) ? d.passamos_a_acreditar : []).map((c: any) => ({
       afirmacao: String(c?.afirmacao || '').slice(0, 400),
       evidencia: String(c?.evidencia || '').slice(0, 400),
@@ -310,35 +201,60 @@ async function consolidar(
 // ── O ciclo inteiro ──────────────────────────────────────────────────────
 
 export async function investigarMercado(
-  env: Env, opts: { sessao: string; contexto: string; naoRepita: string; direcao?: string },
+  env: Env,
+  opts: { sessao: string; contexto: string; naoRepita: string; direcao?: string; mundo: Mundo; vitrine: Vitrine },
 ): Promise<ResultadoInvestigacao> {
   const vivas = await crencasVivas(env);
   const textoCrencas = formatarCrencas(vivas);
+  const menu = catalogoDeMetricas(opts.mundo, opts.vitrine);
 
-  const perguntas = await proporPerguntas(env, opts.contexto, textoCrencas, opts.naoRepita, opts.direcao || '');
-  if (!perguntas.length) {
-    return { perguntas: [], testes: [], passamosAAcreditar: [], caiuPorTerra: [], emAberto: [], leitura: 'A mesa não conseguiu formular pergunta nenhuma nesta rodada.' };
+  const pedidos = await proporPerguntas(env, opts.contexto, textoCrencas, opts.naoRepita, menu, opts.direcao || '');
+  if (!pedidos.length) {
+    return {
+      perguntas: [], testes: [], passamosAAcreditar: [], caiuPorTerra: [], emAberto: [],
+      leitura: 'A mesa não conseguiu formular pergunta nenhuma nesta rodada.',
+    };
   }
 
-  // Cada pergunta é testada de forma independente — ângulos diferentes rodando
-  // em paralelo é o oposto de uma linha de raciocínio única.
-  const testes = await Promise.all(perguntas.map((p) => testarPergunta(env, p)));
+  // A conta é local: sem rede, sem SQL, sem timeout. Uma medição que não acha
+  // o alvo devolve o motivo, e isso também é informação — quer dizer que a mesa
+  // perguntou sobre algo que não está no radar de hoje.
+  const medidos = pedidos.map((pedido) => {
+    const m = medir(pedido, opts.mundo, opts.vitrine);
+    console.log(`[medicao] ${pedido.metrica}(${pedido.alvo_a}${pedido.alvo_b ? ' × ' + pedido.alvo_b : ''}) → ${m.ok ? m.numeros.slice(0, 160) : 'FALHOU: ' + m.erro}`);
+    return { pedido, numeros: m.ok ? m.numeros : `não deu pra medir: ${m.erro}`, ok: m.ok };
+  });
+
+  const fim = await concluir(env, medidos.filter((x) => x.ok), textoCrencas);
+
+  const testes: Teste[] = medidos.map((x, i) => {
+    const v = x.ok ? fim.vereditos[i] : undefined;
+    const veredito = x.ok
+      ? (['confirma', 'refuta', 'inconclusivo'].includes(String(v?.veredito)) ? String(v?.veredito) : 'inconclusivo')
+      : 'falhou';
+    return {
+      pergunta: x.pedido.pergunta,
+      hipotese: x.pedido.hipotese,
+      medicao: `${x.pedido.metrica}: ${x.pedido.alvo_a}${x.pedido.alvo_b ? ` × ${x.pedido.alvo_b}` : ''}`,
+      numeros: x.numeros,
+      veredito: veredito as Teste['veredito'],
+      o_que_o_numero_diz: v?.o_que_o_numero_diz || x.numeros,
+    };
+  });
 
   const agora = new Date().toISOString();
   for (const t of testes) {
     try {
       await env.DB.exec(
         'INSERT INTO investigacoes (sessao, pergunta, hipotese, sql_usado, linhas, veredito, o_que_o_numero_diz, criado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [opts.sessao, t.pergunta, t.hipotese, t.sql.slice(0, 4000), t.linhas, t.veredito, t.o_que_o_numero_diz, agora],
+        [opts.sessao, t.pergunta, t.hipotese, t.medicao, 0, t.veredito, `${t.numeros} || ${t.o_que_o_numero_diz}`.slice(0, 1200), agora],
       );
     } catch { /* o registro é auxiliar */ }
   }
 
-  const fim = await consolidar(env, testes, textoCrencas);
-
-  // O modelo de mundo da mesa é atualizado: o que foi confirmado entra ou
-  // ganha confiança; o que caiu é marcado como caído — e fica registrado, pra
-  // ninguém ressuscitar sem evidência nova.
+  // O modelo de mundo da casa é atualizado: o confirmado entra ou ganha
+  // confiança; o que caiu fica registrado como caído, pra ninguém ressuscitar
+  // sem evidência nova.
   try {
     for (const c of fim.passamosAAcreditar) {
       const existente = vivas.find((v) => v.afirmacao.toLowerCase().slice(0, 60) === c.afirmacao.toLowerCase().slice(0, 60));
@@ -363,5 +279,14 @@ export async function investigarMercado(
     }
   } catch { /* a leitura da rodada vale mesmo se a gravação falhar */ }
 
-  return { perguntas, testes, ...fim };
+  return {
+    perguntas: pedidos.map((p) => ({ pergunta: p.pergunta, hipotese: p.hipotese, por_que_importa: '' })),
+    testes,
+    passamosAAcreditar: fim.passamosAAcreditar,
+    caiuPorTerra: fim.caiuPorTerra,
+    emAberto: fim.emAberto,
+    leitura: fim.leitura,
+  };
 }
+
+export { PESSOAS };

@@ -40,12 +40,12 @@ import {
 import { buscarPedidosFutebolTravados } from './fontes/pedidosTravados';
 import { buscarManchetesReais } from './fontes/noticiasFutebol';
 import { buscarTendenciasGoogle } from './fontes/tendenciasGoogle';
-import { buscarVendasFutebol } from './fontes/vendasFutebol';
 import { buscarMundo, dossieDe, resumoDoMundo, type Mundo } from './web/mundo';
+import { buscarVitrine, formatarVitrine, type Vitrine } from './web/vitrine';
 import { pautasVindasDoCorredor, marcarPautasAproveitadas } from './corredor';
 import { PESSOAS } from './pessoas';
 import { investigarMercado } from './investigacao';
-import { montarCardapio, formatarCardapio, type Cardapio } from './fontes/cardapio';
+import { montarCardapio, formatarCardapio } from './mercado/cardapio';
 import { medirRecomendacoesAnteriores, formatarPlacar, clubesJaBatidos } from './placar';
 import {
   direcaoAberta, blocoDoCoordenador, impressaoDaDirecao, responderDemanda, fecharComDirecao,
@@ -121,6 +121,7 @@ export async function buscarFonteAutomatica(
   env: Env,
   chave: string,
   mundo?: Mundo,
+  vitrine?: Vitrine,
 ): Promise<FonteAutomatica | null> {
   // O dossiê de internet aberta é o que o agente vê primeiro. Cada um recebe o
   // recorte dele (ver src/web/mundo.ts) — e não o mesmo JSON pra todos, que era
@@ -159,11 +160,22 @@ export async function buscarFonteAutomatica(
       };
     }
     case 'analista': {
-      // A fonte que estava faltando. Ver o cabeçalho de vendasFutebol.ts: o
-      // agente dizia "sem dado" porque a fonte antiga exigia cookie de
-      // navegador. Esta aqui é o mesmo Metabase que o produtor já usa.
-      const v = await buscarVendasFutebol(env);
-      return { dados: v as unknown as Record<string, unknown>, fontesComFalha: v.ok ? [] : [v.erro || 'falha desconhecida'] };
+      // A Rafa deixou de olhar a venda própria (18/09/2026, decisão do João:
+      // "não precisamos do número de vendas"). A fonte dela agora é o mercado:
+      // oferta, preço praticado e novidade nos catálogos de quem vende pro
+      // mesmo público. Continua sendo o contrapeso numérico da mesa — só que
+      // medindo o mundo em vez do retrovisor da casa.
+      if (!vitrine) return null;
+      return {
+        dados: {
+          de_onde_veio: 'catálogos públicos (Shopify /products.json) de COPA Football, Football Shirt Collective, Stussy e Kith',
+          vitrine_do_mercado: formatarVitrine(vitrine),
+          categorias: vitrine.categorias,
+          novidades_45d: vitrine.novidades.length,
+          temas_do_momento: vitrine.temasDoMomento,
+        },
+        fontesComFalha: vitrine.falhas,
+      };
     }
     case 'criacao':
     case 'marketeiro': {
@@ -361,16 +373,16 @@ export async function rodarReuniao(
   // de falar no vácuo, que era a queixa do João em 16/09.
   // O mundo primeiro: ele traz o calendário, que o cardápio reaproveita em vez
   // de varrer o globoesporte de novo.
-  const mundo = await buscarMundo();
-  const [direcao, cardapio, placarBruto, jaBatidos] = await Promise.all([
+  const [mundo, vitrine] = await Promise.all([buscarMundo(), buscarVitrine()]);
+  const cardapio = montarCardapio(mundo, vitrine);
+  const [direcao, placarBruto, jaBatidos] = await Promise.all([
     direcaoAberta(env),
-    montarCardapio(env, mundo.calendario),
     medirRecomendacoesAnteriores(env),
     clubesJaBatidos(env),
   ]);
   const placar = formatarPlacar(placarBruto);
   const fontes: Record<string, FonteAutomatica | null> = {};
-  await Promise.all(COLETA.map(async (chave) => { fontes[chave] = await buscarFonteAutomatica(env, chave, mundo); }));
+  await Promise.all(COLETA.map(async (chave) => { fontes[chave] = await buscarFonteAutomatica(env, chave, mundo, vitrine); }));
   const impressao = impressaoDigital({
     fontes: Object.fromEntries(Object.entries(fontes).map(([k, v]) => [k, v?.bruto ?? v?.dados ?? null])),
     direcao: impressaoDaDirecao(direcao),
@@ -379,6 +391,7 @@ export async function rodarReuniao(
     mundo: [
       ...mundo.noticias.concorrencia.map((i) => i.titulo),
       ...mundo.calendario.proximos.map((j) => `${j.mandante}x${j.visitante}`),
+      ...vitrine.novidades.slice(0, 20).map((p) => p.titulo),
     ].sort().join('|'),
   });
 
@@ -399,9 +412,9 @@ export async function rodarReuniao(
   if (placarBruto.houve) {
     ordem += 1;
     const rafaContas = acharAgente('analista')!;
-    const medida = placarBruto.medidas.find((m) => m.un_depois !== null);
+    const medida = placarBruto.medidas.find((m) => m.procura_depois !== null);
     const falaPlacar = medida
-      ? `Da última: ${medida.clube} fez ${medida.un_depois} un em ${placarBruto.dias}d` +
+      ? `Da última: procura por ${medida.clube} em ${medida.procura_depois} leituras/14d` +
         (medida.variacao_pct === null ? '' : ` (${medida.variacao_pct > 0 ? '+' : ''}${medida.variacao_pct}%)`)
       : 'Não deu pra medir o que a gente recomendou da última vez.';
     etapas.push({
@@ -502,7 +515,7 @@ export async function rodarReuniao(
     'item desse cardápio, ela é curiosidade — troque por outra.\n\n';
 
   const inv = await investigarMercado(env, {
-    sessao, contexto: dossie, naoRepita,
+    sessao, contexto: dossie, naoRepita, mundo, vitrine,
     direcao: blocoDirecaoInvestigacao + blocoCardapioInvestigacao,
   });
 
@@ -622,13 +635,13 @@ export async function rodarReuniao(
       .map((c) => `procura por ${c.clube} ${c.variacao_pct! > 0 ? '+' : ''}${c.variacao_pct}% em 14 dias`),
     ...mundo.noticias.concorrencia.slice(0, 3).map((i) => `a concorrência lançou: ${i.titulo.slice(0, 110)}`),
     ...mundo.noticias.uniformes.slice(0, 2).map((i) => `camisa nova: ${i.titulo.slice(0, 110)}`),
-    ...cardapio.clubes.slice(0, 3).map((c) => `${c.clube} vendeu ${c.un_30d} un em 30 dias`),
-    // A venda que a Rafa recebeu por fonte própria. Entra aqui de propósito:
-    // mesmo quando a investigação falha inteira, estes são números de produto
-    // com nome, suficientes pra sustentar uma recomendação.
-    ...(((fontes['analista']?.dados as { acelerando?: { produto: string; un_7d: number; variacao_un_pct: number | null }[] })?.acelerando ?? [])
-      .slice(0, 3)
-      .map((p) => `${p.produto}: ${p.un_7d} un na semana${p.variacao_un_pct === null ? '' : `, ${p.variacao_un_pct > 0 ? '+' : ''}${p.variacao_un_pct}%`}`)),
+    ...cardapio.clubes.filter((c) => c.procura_14d > 0).slice(0, 3)
+      .map((c) => `${c.clube}: ${c.procura_14d} leituras em 14d${c.variacao_pct === null ? '' : ` (${c.variacao_pct > 0 ? '+' : ''}${c.variacao_pct}%)`}`),
+    // A oferta do mercado: categoria com preço e novidade. Mesmo que tudo o
+    // mais falhe, isto é número de mercado com nome — suficiente pra sustentar
+    // uma recomendação.
+    ...vitrine.categorias.slice(0, 3)
+      .map((c) => `${c.tipo}: ${c.novos_45d} lançamentos em 45d, preço médio ${c.preco_medio}`),
   ];
 
   const fecho = await fecharComDirecao(env, {
@@ -652,7 +665,7 @@ export async function rodarReuniao(
 
   // ── 7. A ROTINA — a Val cobra o que ficou parado ────────────────────────
   const produtor = acharAgente('produtor')!;
-  const fonteProdutor = await buscarFonteAutomatica(env, 'produtor', mundo);
+  const fonteProdutor = await buscarFonteAutomatica(env, 'produtor', mundo, vitrine);
   const etapaProdutor = await falar(env, produtor, {
     sessao, rodada: 'rotina', ordem: ++ordem,
     entradaBase: JSON.stringify(fonteProdutor?.dados || {}, null, 2),

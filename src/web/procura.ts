@@ -169,6 +169,15 @@ export async function temasEmAlta(quantos = 25, dias = 4): Promise<{ ok: boolean
   return { ok: true, temas };
 }
 
+/** A série de UM clube, pelo nome. É o que o placar usa pra medir a aposta anterior. */
+export async function procuraDeUmClube(nome: string): Promise<ProcuraDeClube | null> {
+  const norm = (x: string) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const chave = Object.keys(ARTIGO_DO_CLUBE).find((k) => norm(k) === norm(nome))
+    || Object.keys(ARTIGO_DO_CLUBE).find((k) => norm(k).includes(norm(nome)) || norm(nome).includes(norm(k)));
+  if (!chave) return null;
+  return serieDoClube(chave, ARTIGO_DO_CLUBE[chave]);
+}
+
 export interface Procura {
   ok: boolean;
   clubes: ProcuraDeClube[];
