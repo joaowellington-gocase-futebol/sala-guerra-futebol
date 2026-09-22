@@ -30,7 +30,13 @@ export interface AtaParaWebhook {
   divergencias: { entre: string; sobre: string; posicoes: string }[];
   acoes: { agente: string; acao: string; prazo?: string }[];
   placar_vendas: string;
-  recomendacoes: { o_que: string; por_que: string; quem: string; ate_quando: string; risco: string }[];
+  /** A entrega da mesa desde 22/09/2026: leitura de mercado com ponte de produto. */
+  leituras: {
+    o_que_o_mercado_pede: string; evidencia: string; como_cabe: string;
+    confianca: string; o_que_confirma: string; tese: string;
+  }[];
+  /** O que cada tese andou nesta rodada — é o que mostra que a mesa progrediu. */
+  movimento_das_teses: { afirmacao: string; movimento: string; o_que_mudou: string; rodadas: number }[];
   entregas: { nome: string; entrega: string; pronta: boolean }[];
   /** Quantas recomendações o juiz barrou por genéricas. Aparece no card como aviso de calibragem. */
   reprovadas: number;
@@ -53,20 +59,35 @@ function corpoGoogleChat(ata: AtaParaWebhook): unknown {
   linhas.push('');
   linhas.push(limitar(ata.resumo_curto || ata.resumo, 340));
 
-  // O que fazer vem primeiro. Se a mesa não recomendou nada, o card diz isso
-  // com todas as letras em vez de disfarçar com leitura de mercado.
-  if (ata.recomendacoes?.length) {
-    linhas.push('');
-    linhas.push('*🎯 O que a mesa recomenda:*');
-    for (const r of ata.recomendacoes.slice(0, 3)) {
-      linhas.push(`• ${limitar(r.o_que, 190)}` +
-        (r.quem || r.ate_quando ? ` _(${[r.quem, r.ate_quando].filter(Boolean).join(', até ')})_` : ''));
+  // A leitura vem primeiro, e vem inteira: o que o mercado pede, com que
+  // número, e como isso cabe nos produtos da casa. Foi isto que o João pediu
+  // em 22/09 — a decisão de futebol é dele, depois.
+  if (ata.leituras?.length) {
+    for (const l of ata.leituras.slice(0, 2)) {
+      linhas.push('');
+      linhas.push(`*🧭 ${limitar(l.o_que_o_mercado_pede, 220)}*`);
+      linhas.push(`_${limitar(l.evidencia, 260)}_ (confiança ${l.confianca})`);
+      linhas.push(`*↳ como cabe nos nossos produtos:* ${limitar(l.como_cabe, 260)}`);
+      if (l.o_que_confirma) linhas.push(`🔭 _amanhã confirma ou derruba:_ ${limitar(l.o_que_confirma, 160)}`);
     }
   } else {
     linhas.push('');
     linhas.push(ata.reprovadas
-      ? `_A mesa não entregou recomendação: ${ata.reprovadas} foram barradas na conferência por serem genéricas demais (sem clube, produto, número ou prazo)._`
-      : '_A mesa não recomendou nada nesta rodada — o dado de hoje não sustentou nenhuma decisão nova._');
+      ? `_A mesa não entregou leitura: ${ata.reprovadas} foram barradas na conferência (sem categoria, sem número medido hoje, ou sem a ponte de produto)._`
+      : '_A mesa não leu nada novo nesta rodada — o dado de hoje não sustentou nenhuma leitura._');
+  }
+
+  // O movimento das teses é o que mostra que a mesa está progredindo em vez de
+  // recomeçar todo dia. Só o que mexeu entra no card; "parada" fica pra ata.
+  const mexeu = (ata.movimento_das_teses || []).filter((m) => m.movimento !== 'parada');
+  if (mexeu.length) {
+    linhas.push('');
+    linhas.push('*🧵 As teses da mesa:*');
+    for (const m of mexeu.slice(0, 3)) {
+      const icone = m.movimento === 'caiu' ? '✕' : m.movimento === 'nasceu' ? '✦' : '↑';
+      linhas.push(`${icone} ${limitar(m.afirmacao, 150)}` +
+        (m.movimento === 'confirmou' ? ` _(${m.rodadas} rodadas de pé)_` : ''));
+    }
   }
 
   if (ata.entregas?.length) {

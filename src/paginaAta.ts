@@ -93,6 +93,16 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
   const consenso: string[] = jsonSeguro(ata.consenso);
   const divergencias: { entre: string; sobre: string; posicoes: string }[] = jsonSeguro(ata.divergencias);
   const acoes: { agente: string; acao: string; prazo?: string }[] = jsonSeguro(ata.acoes);
+  // A entrega nova (22/09/2026). As atas antigas continuam com `recomendacoes`
+  // no formato tático, e a página segue sabendo exibi-las — histórico não se
+  // apaga porque a régua mudou.
+  const leituras: {
+    o_que_o_mercado_pede: string; evidencia: string; como_cabe: string;
+    confianca: string; o_que_confirma: string; tese: string;
+  }[] = jsonSeguro(ata.leituras);
+  const movimento: { afirmacao: string; movimento: string; o_que_mudou: string; rodadas: number }[] =
+    jsonSeguro(ata.movimento_teses);
+  const avisos: string[] = jsonSeguro(ata.avisos);
   const recomendacoes: { o_que: string; por_que: string; quem: string; ate_quando: string; risco: string }[] = jsonSeguro(ata.recomendacoes);
   const entregas: { id: number; nome: string; entrega: string; o_que_falta: string; pronta: boolean }[] = jsonSeguro(ata.entregas);
   const reprovadas: { o_que: string; motivos: string[] }[] = jsonSeguro(ata.reprovadas);
@@ -118,21 +128,47 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
 
   ${ata.resumo_curto ? `<div class="chamada"><b>${esc(ata.resumo_curto)}</b></div>` : ''}
 
-  <h2>🎯 O que a mesa recomenda</h2>
-  ${recomendacoes.length ? recomendacoes.map((r) => `
+  <h2>🧭 O que o mercado está pedindo</h2>
+  ${leituras.length ? leituras.map((l) => `
+    <div class="reco">
+      <div class="oque">${esc(l.o_que_o_mercado_pede)}</div>
+      ${l.evidencia ? `<div class="linha">Evidência <b>(confiança ${esc(l.confianca)})</b>: ${esc(l.evidencia)}</div>` : ''}
+      ${l.como_cabe ? `<div class="linha"><b>↳ como cabe nos nossos produtos:</b> ${esc(l.como_cabe)}</div>` : ''}
+      ${l.o_que_confirma ? `<div class="risco">🔭 confirma ou derruba amanhã: ${esc(l.o_que_confirma)}</div>` : ''}
+    </div>`).join('')
+    : recomendacoes.length ? `<p class="vazio">Ata antiga, do tempo em que a mesa entregava recomendação tática:</p>` +
+      recomendacoes.map((r) => `
     <div class="reco">
       <div class="oque">${esc(r.o_que)}</div>
       ${r.por_que ? `<div class="linha">Por quê: ${esc(r.por_que)}</div>` : ''}
       <div class="linha">${esc(nomeDe(r.quem))}${r.ate_quando ? ` · até ${esc(r.ate_quando)}` : ''}</div>
       ${r.risco ? `<div class="risco">⚠ ${esc(r.risco)}</div>` : ''}
     </div>`).join('')
-    : '<p class="vazio">A mesa não recomendou nada nesta rodada. Isso é uma resposta: o dado de hoje não sustentou nenhuma decisão nova, e recomendação inventada pra parecer produtiva é pior que silêncio.</p>'}
+    : '<p class="vazio">A mesa não leu nada novo nesta rodada. Isso é uma resposta: o dado de hoje não sustentou nenhuma leitura, e leitura inventada pra parecer produtiva é pior que silêncio.</p>'}
+
+  ${movimento.length ? `<h2>🧵 As teses da mesa</h2>
+  <p class="vazio" style="margin-bottom:10px">O fio que liga uma reunião à seguinte. Cada tese nasceu de um número
+  e precisa, a cada rodada, engrossar, mudar de forma ou cair. Tese que fica parada some da mesa depois de uma
+  semana.</p>` + movimento.map((m) => {
+    const icone = m.movimento === 'caiu' ? '✕' : m.movimento === 'nasceu' ? '✦' : m.movimento === 'parada' ? '·' : '↑';
+    return `
+    <div class="destaque${m.movimento === 'caiu' ? ' brigou' : ''}">
+      <div class="quem">${icone} ${esc(m.afirmacao)}</div>
+      <div>${esc(m.o_que_mudou)}${m.movimento === 'confirmou' ? ` · ${m.rodadas} rodadas de pé` : ''}</div>
+    </div>`;
+  }).join('') : ''}
+
+  ${avisos.length ? `<h2>⚠ Números que não bateram</h2>
+  <p class="vazio" style="margin-bottom:10px">Estas leituras passaram na conferência, mas citam número que não
+  corresponde a nada medido nesta rodada. Pode ser conta derivada (um percentual calculado a partir de dois números
+  reais), pode ser número solto. Fica registrado para você julgar.</p>` +
+    avisos.map((a) => `<div class="destaque">${esc(a)}</div>`).join('') : ''}
 
   ${reprovadas.length ? `<h2>🚫 Barradas na conferência</h2>
   <p class="vazio" style="margin-bottom:10px">Estas a mesa tentou entregar e a conferência automática barrou antes de
-  chegar em você. A régua é sempre a mesma: clube com nome, produto com nome, um número como evidência e um prazo
-  de verdade. Ver muita coisa aqui quer dizer que a mesa está falando no vácuo; ver nenhuma nunca quer dizer que a
-  régua ficou frouxa.</p>` + reprovadas.map((x) => `
+  chegar em você. A régua é sempre a mesma: a categoria com nome, um número que foi medido HOJE, a ponte para um
+  produto que a casa fabrica, e o que confirmaria ou derrubaria a leitura amanhã. Ver muita coisa aqui quer dizer
+  que a mesa está falando no vácuo; ver nenhuma nunca quer dizer que a régua ficou frouxa.</p>` + reprovadas.map((x) => `
     <div class="destaque brigou">
       <div class="quem">${esc(x.o_que)}</div>
       <ul>${(x.motivos || []).map((m) => `<li>${esc(m)}</li>`).join('')}</ul>

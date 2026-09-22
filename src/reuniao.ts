@@ -42,15 +42,24 @@ import { buscarManchetesReais } from './fontes/noticiasFutebol';
 import { buscarTendenciasGoogle } from './fontes/tendenciasGoogle';
 import { buscarMundo, dossieDe, resumoDoMundo, type Mundo } from './web/mundo';
 import { buscarVitrine, formatarVitrine, type Vitrine } from './web/vitrine';
+import { formatarProcura } from './web/procura';
 import { pautasVindasDoCorredor, marcarPautasAproveitadas } from './corredor';
 import { PESSOAS } from './pessoas';
 import { investigarMercado } from './investigacao';
-import { montarCardapio, formatarCardapio } from './mercado/cardapio';
-import { medirRecomendacoesAnteriores, formatarPlacar, clubesJaBatidos } from './placar';
+import { montarCardapio, formatarCardapio, PRODUTOS_DA_CASA } from './mercado/cardapio';
 import {
-  direcaoAberta, blocoDoCoordenador, impressaoDaDirecao, responderDemanda, fecharComDirecao,
+  montarMapaDeDemanda, formatarMapaDeDemanda, numerosDaRodada, numerosDeProcura,
+} from './mercado/demanda';
+import { fecharComLeitura, leiturasAnteriores, type Leitura } from './mercado/leitura';
+import { medirLeiturasAnteriores, formatarPlacar } from './placar';
+import {
+  tesesVivas, podarTeses, movimentoDaRodada, formatarMovimento,
+  type MovimentoDaTese,
+} from './teses';
+import {
+  direcaoAberta, blocoDoCoordenador, impressaoDaDirecao, responderDemanda,
   registrarResposta, contarRodada,
-  type DirecaoAberta, type EntregaDeDemanda, type Recomendacao,
+  type DirecaoAberta, type EntregaDeDemanda,
 } from './direcao';
 
 export interface Etapa {
@@ -87,7 +96,12 @@ export interface Ata {
   divergencias: { entre: string; sobre: string; posicoes: string }[];
   acoes: { agente: string; acao: string; prazo?: string }[];
   placar_vendas: string;
-  recomendacoes: Recomendacao[];
+  /** O que a mesa leu do mercado, com a ponte de produto. Substituiu `recomendacoes` em 22/09/2026. */
+  leituras: Leitura[];
+  /** O que aconteceu com cada tese nesta rodada — o fio que liga uma reunião à seguinte. */
+  movimento_das_teses: MovimentoDaTese[];
+  /** Números que passaram na conferência mas não batem com o medido. Transparência, não reprovação. */
+  avisos: string[];
   /** O que o juiz barrou por ser genérico. Fica registrado: é calibragem, não vergonha. */
   reprovadas: { o_que: string; motivos: string[] }[];
   entregas: EntregaDeDemanda[];
@@ -375,10 +389,19 @@ export async function rodarReuniao(
   // de varrer o globoesporte de novo.
   const [mundo, vitrine] = await Promise.all([buscarMundo(), buscarVitrine()]);
   const cardapio = montarCardapio(mundo, vitrine);
-  const [direcao, placarBruto, jaBatidos] = await Promise.all([
+  // O mapa de demanda é o corte transversal dos catálogos: é ele que responde
+  // "o que o público masculino tem procurado" em categoria e preço, que é o
+  // que o João pediu em 22/09. Ver src/mercado/demanda.ts.
+  const mapa = montarMapaDeDemanda(vitrine, mundo);
+
+  // A poda vem ANTES de ler as teses: a mesa carrega no máximo três, e o que
+  // ninguém investiga há uma semana sai de cena sozinho.
+  await podarTeses(env);
+  const [direcao, placarBruto, teses, leiturasDeAntes] = await Promise.all([
     direcaoAberta(env),
-    medirRecomendacoesAnteriores(env),
-    clubesJaBatidos(env),
+    medirLeiturasAnteriores(env, mapa),
+    tesesVivas(env),
+    leiturasAnteriores(env),
   ]);
   const placar = formatarPlacar(placarBruto);
   const fontes: Record<string, FonteAutomatica | null> = {};
@@ -406,17 +429,23 @@ export async function rodarReuniao(
 
   // ── 0.5. A PRESTAÇÃO DE CONTAS abre a reunião ───────────────────────────
   //
-  // Antes de qualquer coisa nova, o que deu a recomendação da véspera. É a
-  // Rafa quem diz, porque é número — e é a primeira fala da sala de propósito:
-  // uma mesa que cobra a si mesma antes de opinar de novo é uma mesa diferente.
+  // Antes de qualquer coisa nova, o que deu a leitura da véspera. É a Rafa
+  // quem diz, porque é número — e é a primeira fala da sala de propósito: uma
+  // mesa que cobra a si mesma antes de opinar de novo é uma mesa diferente.
   if (placarBruto.houve) {
     ordem += 1;
     const rafaContas = acharAgente('analista')!;
-    const medida = placarBruto.medidas.find((m) => m.procura_depois !== null);
-    const falaPlacar = medida
-      ? `Da última: procura por ${medida.clube} em ${medida.procura_depois} leituras/14d` +
-        (medida.variacao_pct === null ? '' : ` (${medida.variacao_pct > 0 ? '+' : ''}${medida.variacao_pct}%)`)
-      : 'Não deu pra medir o que a gente recomendou da última vez.';
+    // A primeira família comparável da leitura anterior: é a frase mais curta
+    // que já diz se a tese de ontem engrossou ou esvaziou.
+    const comparavel = placarBruto.cobradas
+      .flatMap((c) => c.familias)
+      .find((f) => f.agora !== null && f.entao !== null);
+    const falaPlacar = comparavel
+      ? `Da última: ${comparavel.familia} estava em ${comparavel.entao}, hoje está em ${comparavel.agora}` +
+        ` (${comparavel.agora! - comparavel.entao! >= 0 ? '+' : ''}${comparavel.agora! - comparavel.entao!})`
+      : placarBruto.cobradas.length
+        ? 'Da última leitura não sobrou número comparável no mapa de hoje.'
+        : 'Não deu pra medir o que a gente leu da última vez.';
     etapas.push({
       rodada: 'contas', ordem, chave: rafaContas.chave, nome: rafaContas.nome,
       ok: true, dados: placarBruto, fala: falaPlacar.slice(0, 300),
@@ -489,6 +518,7 @@ export async function rodarReuniao(
   const dossie = `O MUNDO LÁ FORA HOJE (internet aberta, consultada agora):\n${resumoDoMundo(mundo)}\n\n` +
     contextoDe(coleta) +
     (vozesDaCasa ? `\n\n${vozesDaCasa}` : '') +
+    `\n\n${formatarMapaDeDemanda(mapa)}` +
     `\n\n${formatarCardapio(cardapio)}` +
     `\n\n${placar}`;
 
@@ -509,10 +539,12 @@ export async function rodarReuniao(
   // poder mudar uma decisão sobre um clube e um produto que existem. Pergunta
   // sobre um mercado abstrato rende ata bonita e nenhuma escolha.
   const blocoCardapioInvestigacao =
-    formatarCardapio(cardapio) +
-    '\n\nA PERGUNTA DE HOJE TEM QUE SER SOBRE ISTO. Ela precisa ser capaz de mudar o que a casa faz com um ' +
-    'clube e um produto da lista acima. Se a resposta da sua pergunta não mudaria nenhuma decisão sobre nenhum ' +
-    'item desse cardápio, ela é curiosidade — troque por outra.\n\n';
+    formatarMapaDeDemanda(mapa) +
+    '\n\n' + formatarCardapio(cardapio) +
+    '\n\nA PERGUNTA DE HOJE TEM QUE SER SOBRE O QUE O MERCADO MASCULINO ESTÁ PEDINDO — categoria, preço, ' +
+    'linguagem —, não sobre qual clube estampar. O João faz o recorte de futebol depois, com a leitura na ' +
+    'mão; o que ele não tem tempo de fazer é ler o mercado. Se a resposta da sua pergunta não mudaria nada ' +
+    'sobre nenhuma família de produto medida acima, ela é curiosidade — troque por outra.\n\n';
 
   const inv = await investigarMercado(env, {
     sessao, contexto: dossie, naoRepita, mundo, vitrine,
@@ -553,10 +585,16 @@ export async function rodarReuniao(
       `número que você TEM — parar a casa por causa de uma consulta que não escreveu é a pior das saídas.`
     : '';
 
+  // O que cada tese andou nesta rodada. Comparação pura entre o estado de
+  // antes e o resultado da investigação — sem chamada de IA. É isto que faz a
+  // reunião de amanhã continuar de onde esta parou, em vez de recomeçar.
+  const movimento = movimentoDaRodada(teses, inv);
+
   const achado =
     `PERGUNTAS TESTADAS E O QUE O NÚMERO RESPONDEU:\n` +
     inv.testes.map((t) => `- [${t.veredito}] ${t.pergunta}\n  ${t.o_que_o_numero_diz}`).join('\n') +
     `\n\nLEITURA DA RODADA: ${inv.leitura}` +
+    (movimento.length ? `\n\nO QUE AS TESES DA MESA ANDARAM HOJE:\n${formatarMovimento(movimento)}` : '') +
     (inv.caiuPorTerra.length ? `\n\nCAIU POR TERRA: ${inv.caiuPorTerra.map((c) => c.afirmacao).join('; ')}` : '') +
     (motivoDaCegueira ? `\n\n⚠ ${motivoDaCegueira}` : '');
 
@@ -624,11 +662,19 @@ export async function rodarReuniao(
     if (direcao.tema) await contarRodada(env, [direcao.tema.id]);
   } catch { /* auxiliar */ }
 
-  // ── 6. A DIREÇÃO — o que a mesa recomenda ao João ───────────────────────
-  // O material da rodada: é o que separa "não há o que recomendar" de esquiva.
-  // Enquanto houver jogo com data, procura se mexendo ou concorrente lançando,
-  // a mesa tem o que decidir — e o fechamento é cobrado por isso.
+  // ── 6. A LEITURA — o que o mercado está pedindo, e como cabe na casa ────
+  //
+  // Virou leitura de mercado em 22/09/2026 (era "a direção": clube, produto e
+  // prazo). O material da rodada é o que separa "não há o que ler" de esquiva:
+  // enquanto houver família se movendo, palavra circulando ou procura mudando,
+  // a mesa tem o que ler — e o fechamento é cobrado por isso.
   const linhasDeMaterial = [
+    // O que o mercado lançou, por família — a matéria-prima da leitura.
+    ...mapa.familias.filter((f) => f.novos_45d >= 3).slice(0, 4).map((f) =>
+      `${f.familia}: ${f.novos_45d} lançamentos em 45d (${f.share_lancamentos_pct}% do que o mercado lançou), ` +
+      `preço médio ${f.preco_medio}` + (f.na_casa.length ? ` — a casa faz ${f.na_casa.join('/')}` : ' — a casa não faz')),
+    ...mapa.palavras.filter((p) => p.onde === 'dois_lados').slice(0, 3).map((p) =>
+      `"${p.palavra}" aparece em ${p.nos_lancamentos} lançamentos E em ${p.fora_da_prateleira} menções fora da prateleira`),
     ...mundo.calendario.proximos.slice(0, 4).map((j) =>
       `${j.mandante} x ${j.visitante} em ${j.data} (daqui a ${j.em_dias} dias)${j.classico ? ' — CLÁSSICO' : ''}`),
     ...mundo.procura.clubes.filter((c) => (c.variacao_pct ?? 0) >= 15)
@@ -644,16 +690,24 @@ export async function rodarReuniao(
       .map((c) => `${c.tipo}: ${c.novos_45d} lançamentos em 45d, preço médio ${c.preco_medio}`),
   ];
 
-  const fecho = await fecharComDirecao(env, {
-    tema, achado, lentes: textoLentes, entregas, naoRepita, direcao, cardapio, placar,
+  const fecho = await fecharComLeitura(env, {
+    tema, achado, lentes: textoLentes, entregas, naoRepita, direcao, mapa, placar, teses,
+    procura: formatarProcura(mundo.procura),
     material: { temMaterial: linhasDeMaterial.length >= 2, linhas: linhasDeMaterial.slice(0, 10) },
-    juiz: { jaBatidos, emJogo: mundo.clubesEmJogo },
+    juiz: {
+      familias: mapa.familias.map((f) => f.familia),
+      palavras: mapa.palavras.map((p) => p.palavra),
+      produtosDaCasa: PRODUTOS_DA_CASA,
+      numeros: numerosDaRodada(mapa, mundo),
+      numerosDeProcura: numerosDeProcura(mundo),
+      anteriores: leiturasDeAntes,
+    },
   });
 
-  if (fecho.recomendacoes.length || fecho.se_eu_fosse_voce) {
+  if (fecho.leituras.length || fecho.se_eu_fosse_voce) {
     ordem += 1;
     const caio = acharAgente('marketeiro')!;
-    const falaFecho = (fecho.se_eu_fosse_voce || fecho.recomendacoes[0]?.o_que || '').slice(0, 300);
+    const falaFecho = (fecho.se_eu_fosse_voce || fecho.leituras[0]?.o_que_o_mercado_pede || '').slice(0, 300);
     etapas.push({ rodada: 'direcao', ordem, chave: caio.chave, nome: caio.nome, ok: true, dados: fecho, fala: falaFecho });
     try {
       await env.DB.exec('INSERT INTO falas (sessao, ordem, rodada, chave, texto, criado_em) VALUES (?, ?, ?, ?, ?, ?)',
@@ -674,10 +728,11 @@ export async function rodarReuniao(
     instrucaoExtra:
       'A mesa fechou esta rodada com o que está abaixo. Sua lista de hoje serve pra fazer isso ANDAR — e pra ' +
       'cobrar o que já estava combinado antes.\n\n' +
-      (fecho.recomendacoes.length
-        ? 'O QUE A MESA RECOMENDOU AO JOÃO AGORA:\n' +
-          fecho.recomendacoes.map((r) => `- ${r.o_que} (${r.quem}, até ${r.ate_quando || 'sem prazo'})`).join('\n')
-        : 'A mesa não recomendou nada nesta rodada.') +
+      (fecho.leituras.length
+        ? 'O QUE A MESA LEU DO MERCADO AGORA:\n' +
+          fecho.leituras.map((l) =>
+            `- ${l.o_que_o_mercado_pede} (confiança ${l.confianca})\n  como cabe na casa: ${l.como_cabe}`).join('\n')
+        : 'A mesa não entregou leitura nenhuma nesta rodada.') +
       (entregas.length
         ? '\n\nO QUE A MESA ENTREGOU DO QUE O JOÃO PEDIU:\n' +
           entregas.map((e) => `- ${e.nome}: ${e.pronta ? 'entregue' : 'incompleto'} — ${e.entrega.slice(0, 200)}`).join('\n')
@@ -711,9 +766,19 @@ export async function rodarReuniao(
     || (cegaPorFalha ? motivoDaCegueira : '')
     || primeirasFrases(inv.leitura, 2);
 
+  // A leitura vai por inteiro no resumo: é a entrega, não um acessório dela.
+  const textoDasLeituras = fecho.leituras.map((l) =>
+    `O QUE O MERCADO PEDE: ${l.o_que_o_mercado_pede}\n` +
+    `EVIDÊNCIA (${l.confianca}): ${l.evidencia}\n` +
+    `COMO CABE NOS NOSSOS PRODUTOS: ${l.como_cabe}\n` +
+    `O QUE CONFIRMA OU DERRUBA AMANHÃ: ${l.o_que_confirma}`,
+  ).join('\n\n');
+
   const ata: Ata = {
     resumo: [
-      fecho.se_eu_fosse_voce ? `O que a mesa recomenda: ${fecho.se_eu_fosse_voce}` : '',
+      fecho.se_eu_fosse_voce ? `Se eu fosse você: ${fecho.se_eu_fosse_voce}` : '',
+      textoDasLeituras,
+      movimento.length ? `AS TESES DA MESA HOJE:\n${formatarMovimento(movimento)}` : '',
       placarBruto.houve ? placar.split('\nATENÇÃO AO LER ISTO:')[0].trim() : '',
       inv.leitura,
       motivoDaCegueira,
@@ -727,8 +792,11 @@ export async function rodarReuniao(
       posicoes: c.por_que,
     })),
     acoes: [
-      ...fecho.recomendacoes.map((r) => ({
-        agente: r.quem, acao: r.o_que, prazo: r.ate_quando,
+      // A leitura não manda ninguém fazer nada — quem decide o que vira
+      // trabalho é o João. O que entra como ação é o que a mesa se comprometeu
+      // a medir na próxima rodada.
+      ...fecho.leituras.filter((l) => l.o_que_confirma).map((l) => ({
+        agente: 'analista', acao: `medir na próxima rodada: ${l.o_que_confirma}`,
       })),
       ...inv.emAberto.map((x) => ({ agente: 'analista', acao: `testar de outro jeito: ${x}` })),
       ...(Array.isArray((etapaProdutor.dados as any)?.hoje) ? (etapaProdutor.dados as any).hoje.slice(0, 4) : [])
@@ -739,7 +807,9 @@ export async function rodarReuniao(
       : inv.testes.filter((t) => t.veredito === 'refuta').length
         ? `${inv.testes.filter((t) => t.veredito === 'refuta').length} de ${inv.testes.length} hipóteses caíram no teste`
         : `${inv.testes.filter((t) => t.veredito === 'confirma').length} de ${inv.testes.length} hipóteses confirmadas`,
-    recomendacoes: fecho.recomendacoes,
+    leituras: fecho.leituras,
+    movimento_das_teses: movimento,
+    avisos: fecho.avisos,
     reprovadas: fecho.reprovadas,
     entregas,
     precisamos_de_voce: fecho.precisamos_de_voce,
@@ -747,18 +817,20 @@ export async function rodarReuniao(
 
   try {
     await env.DB.exec(
-      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, recomendacoes, entregas, precisamos_de_voce, reprovadas)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, entregas, precisamos_de_voce, reprovadas, leituras, movimento_teses, avisos)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sessao) DO UPDATE SET tema=excluded.tema, resumo=excluded.resumo,
          resumo_curto=excluded.resumo_curto, consenso=excluded.consenso,
          divergencias=excluded.divergencias, acoes=excluded.acoes, placar_vendas=excluded.placar_vendas,
-         impressao=excluded.impressao, modo=excluded.modo, recomendacoes=excluded.recomendacoes,
+         impressao=excluded.impressao, modo=excluded.modo,
          entregas=excluded.entregas, precisamos_de_voce=excluded.precisamos_de_voce,
-         reprovadas=excluded.reprovadas`,
+         reprovadas=excluded.reprovadas, leituras=excluded.leituras,
+         movimento_teses=excluded.movimento_teses, avisos=excluded.avisos`,
       [sessao, tema, quando, automatica ? 1 : 0, ata.resumo, ata.resumo_curto, JSON.stringify(ata.consenso),
        JSON.stringify(ata.divergencias), JSON.stringify(ata.acoes), ata.placar_vendas, 'pendente',
-       impressao, 'completa', JSON.stringify(ata.recomendacoes), JSON.stringify(ata.entregas),
-       ata.precisamos_de_voce, JSON.stringify(ata.reprovadas)],
+       impressao, 'completa', JSON.stringify(ata.entregas),
+       ata.precisamos_de_voce, JSON.stringify(ata.reprovadas), JSON.stringify(ata.leituras),
+       JSON.stringify(ata.movimento_das_teses), JSON.stringify(ata.avisos)],
     );
   } catch { /* a ata em memória segue válida pro webhook */ }
 
@@ -838,16 +910,17 @@ async function rodarRevisao(
     acoes: contas.filter((c) => c.situacao === 'ignorada' && c.agente && c.tarefa)
       .map((c) => ({ agente: String(c.agente), acao: String(c.tarefa) })),
     placar_vendas: '',
-    recomendacoes: [], reprovadas: [], entregas: [], precisamos_de_voce: '',
+    leituras: [], movimento_das_teses: [], avisos: [], reprovadas: [], entregas: [], precisamos_de_voce: '',
   };
 
   try {
     await env.DB.exec(
-      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, recomendacoes, entregas, precisamos_de_voce, reprovadas)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, entregas, precisamos_de_voce, reprovadas, leituras, movimento_teses, avisos)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(sessao) DO UPDATE SET tema=excluded.tema, resumo=excluded.resumo, modo=excluded.modo`,
       [ctx.sessao, tema, ctx.quando, ctx.automatica ? 1 : 0, ata.resumo, ata.resumo_curto, '[]', '[]',
-       JSON.stringify(ata.acoes), '', 'nao enviado (rodada de revisão)', ctx.impressao, 'revisao', '[]', '[]', '', '[]'],
+       JSON.stringify(ata.acoes), '', 'nao enviado (rodada de revisão)', ctx.impressao, 'revisao', '[]', '', '[]',
+       '[]', '[]', '[]'],
     );
   } catch { /* idem */ }
 

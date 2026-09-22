@@ -13,9 +13,10 @@
 //
 // Três coisas acontecem sozinhas, todas por cron da plataforma do GoDeploy
 // (o app não se agenda: não tem setInterval nem scheduled()):
-//   POST /tasks/reuniao  de 2 em 2 horas — a mesa se reúne, aprende e lavra ata
-//   POST /tasks/boletim  toda segunda    — cada agente escreve seu depoimento
-//   POST /tasks/vozao    todo dia às 9h  — o Torcedor manda o recado do Ceará
+//   POST /tasks/reuniao    todo dia às 8h  — a mesa se reúne, aprende e lavra ata
+//   POST /tasks/boletim    toda segunda    — cada agente escreve seu depoimento
+//   POST /tasks/vozao      todo dia às 9h  — o Torcedor manda o recado do Ceará
+//   POST /tasks/sentinela  todo dia às 10h — avisa se a mesa calou ou emudeceu
 
 import { AGENTES, acharAgente, type Agente } from './src/agentes';
 import { chamarAgente, chamarAgenteTexto, type Env as AiEnv } from './src/aiproxy';
@@ -29,6 +30,7 @@ import { renderizarPaginaBoletim } from './src/paginaBoletim';
 import { gerarBoletim } from './src/boletim';
 import { mandarOVozao } from './src/vozao';
 import { conversaDeCorredor, conversasRecentes } from './src/corredor';
+import { vigiar, diagnosticar } from './src/sentinela';
 import { PESSOAS } from './src/pessoas';
 import { buscarPedidosFutebolTravados } from './src/fontes/pedidosTravados';
 import {
@@ -64,7 +66,8 @@ function paraWebhook(r: ResultadoReuniao, origem: string): AtaParaWebhook {
     resumo: r.ata.resumo, resumo_curto: r.ata.resumo_curto,
     consenso: r.ata.consenso, divergencias: r.ata.divergencias,
     acoes: r.ata.acoes, placar_vendas: r.ata.placar_vendas,
-    recomendacoes: r.ata.recomendacoes,
+    leituras: r.ata.leituras,
+    movimento_das_teses: r.ata.movimento_das_teses,
     reprovadas: r.ata.reprovadas.length,
     entregas: r.ata.entregas.map((e) => ({ nome: e.nome, entrega: e.entrega, pronta: e.pronta })),
     precisamos_de_voce: r.ata.precisamos_de_voce,
@@ -124,7 +127,7 @@ export default {
 
         return json({
           ok: true, sessao: r.sessao, tema: r.tema, modo: r.modo,
-          etapas: r.etapas.length, recomendacoes: r.ata.recomendacoes.length, webhook: entrega,
+          etapas: r.etapas.length, leituras: r.ata.leituras.length, webhook: entrega,
           ...(r.modo === 'revisao' ? { nota: 'nenhuma fonte mudou e o João não mandou nada novo — rodou só a cobrança de pendências, sem webhook' } : {}),
         });
       }
@@ -171,6 +174,23 @@ export default {
 
       if (p === '/api/corredor') {
         return json({ conversas: await conversasRecentes(env, 12) });
+      }
+
+      // ── A sentinela: o único jeito de saber que a mesa parou ────────────
+      //
+      // Roda depois da reunião do dia. Só fala quando há algo errado — e o
+      // mesmo alerta não se repete. Ver src/sentinela.ts.
+      if (p === '/tasks/sentinela' && request.method === 'POST') {
+        const assinadaPeloCron = !!request.headers.get('x-godeploy-cron');
+        const manual = url.searchParams.get('manual') === '1';
+        if (!assinadaPeloCron && !manual) return json({ error: 'Rota do cron. À mão, use ?manual=1.' }, 401);
+        return json(await vigiar(env, url.origin));
+      }
+
+      // O diagnóstico sem efeito colateral: a tela usa pra mostrar o estado da
+      // mesa sem disparar aviso nenhum.
+      if (p === '/api/sentinela') {
+        return json(await diagnosticar(env));
       }
 
       // Quem é quem: a ficha das pessoas, pra tela mostrar gente e não cargo.
@@ -309,6 +329,10 @@ export default {
             resumo: ata.resumo, resumo_curto: ata.resumo_curto, placar_vendas: ata.placar_vendas,
             webhook_status: ata.webhook_status, modo: ata.modo || 'completa',
             consenso: seguro(ata.consenso), divergencias: seguro(ata.divergencias), acoes: seguro(ata.acoes),
+            leituras: seguro(ata.leituras), movimento_teses: seguro(ata.movimento_teses),
+            avisos: seguro(ata.avisos),
+            // O formato antigo continua indo: as atas de antes de 22/09/2026 só
+            // têm isto, e a tela sabe cair pra ele.
             recomendacoes: seguro(ata.recomendacoes), entregas: seguro(ata.entregas),
             reprovadas: seguro(ata.reprovadas),
             precisamos_de_voce: String(ata.precisamos_de_voce || ''),
@@ -321,7 +345,7 @@ export default {
 
       if (p === '/api/atas') {
         const q = await env.DB.query(
-          'SELECT sessao, tema, quando, automatica, resumo, resumo_curto, placar_vendas, webhook_status, modo, recomendacoes FROM atas ORDER BY quando DESC LIMIT 30', []);
+          'SELECT sessao, tema, quando, automatica, resumo, resumo_curto, placar_vendas, webhook_status, modo, leituras, recomendacoes FROM atas ORDER BY quando DESC LIMIT 30', []);
         return json({ atas: q.rows });
       }
 
@@ -400,15 +424,17 @@ export default {
         const r = await dispararWebhook(env, {
           sessao: 'teste', tema: 'Teste de webhook da Sala de Guerra', quando: new Date().toISOString(),
           automatica: false,
-          resumo: 'Se você está lendo isto, o webhook está ligado. As reuniões de verdade acontecem de 2 em 2 horas e chegam neste mesmo canal.',
-          resumo_curto: 'Webhook ligado. A partir de agora a ata de cada reunião cai aqui, de 2 em 2 horas.',
+          resumo: 'Se você está lendo isto, o webhook está ligado. A reunião de verdade acontece uma vez por dia, às 8h de Fortaleza, e cai neste mesmo canal.',
+          resumo_curto: 'Webhook ligado. A partir de agora a leitura de mercado de cada reunião cai aqui, uma vez por dia.',
           consenso: ['o canal está configurado certo'], divergencias: [],
           acoes: [{ agente: 'João', acao: 'nada — era só um teste' }],
           placar_vendas: '',
-          recomendacoes: [{
-            o_que: 'Nada a fazer — isto é um teste de canal',
-            por_que: 'nenhuma reunião rodou aqui', quem: 'joao', ate_quando: '', risco: '',
+          leituras: [{
+            o_que_o_mercado_pede: 'Nada a ler — isto é um teste de canal',
+            evidencia: 'nenhuma reunião rodou aqui', como_cabe: '—',
+            confianca: 'fraca', o_que_confirma: '', tese: '',
           }],
+          movimento_das_teses: [],
           reprovadas: 0,
           entregas: [], precisamos_de_voce: '',
           url: url.origin + '/index.html', urlAta: url.origin + '/ata',

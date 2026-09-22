@@ -93,6 +93,12 @@ export async function migrar(env: Env) {
   // O que o juiz barrou por genérico (src/juiz.ts). Registrado de propósito: se
   // a mesa reprova muito, o problema é a mesa; se reprova nada, o juiz ficou frouxo.
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN reprovadas TEXT', []); } catch { /* já existe */ }
+  // 22/09/2026: a entrega deixou de ser recomendação tática e virou LEITURA de
+  // mercado (src/mercado/leitura.ts). A coluna `recomendacoes` fica onde está,
+  // com o histórico antigo — a página da ata ainda sabe exibi-la.
+  try { await env.DB.exec('ALTER TABLE atas ADD COLUMN leituras TEXT', []); } catch { /* já existe */ }
+  try { await env.DB.exec('ALTER TABLE atas ADD COLUMN movimento_teses TEXT', []); } catch { /* já existe */ }
+  try { await env.DB.exec('ALTER TABLE atas ADD COLUMN avisos TEXT', []); } catch { /* já existe */ }
 
   // FALAS: a linha do tempo da reunião em texto curto, do jeito que a salinha
   // 16-bit precisa pra reencenar a conversa em balões sobre os sprites.

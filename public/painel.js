@@ -110,10 +110,12 @@ function renderAtaResumida() {
   const a = ultimaSala?.ata;
   if (!a) { $('faixaAta').innerHTML = '<i>nenhuma reunião registrada ainda — convoque uma ou espere a automática.</i>'; return; }
   const quando = new Date(a.quando).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' });
-  const reco = (a.recomendacoes || [])[0];
+  const leitura = (a.leituras || [])[0];
+  const antiga = (a.recomendacoes || [])[0];
+  const chamada = leitura ? String(leitura.o_que_o_mercado_pede) : antiga ? String(antiga.o_que) : '';
   $('faixaAta').innerHTML =
     `<b>${a.automatica ? '🤖 automática' : '📣 convocada'}</b> · ${esc(quando)} · <b>${esc(a.tema)}</b>` +
-    (reco ? ` · 🎯 <b>${esc(String(reco.o_que).slice(0, 110))}</b>` : ' · <i>sem recomendação nesta rodada</i>') +
+    (chamada ? ` · 🧭 <b>${esc(chamada.slice(0, 110))}</b>` : ' · <i>sem leitura nesta rodada</i>') +
     ` <button class="link" id="btnVerAta">ver ata</button>` +
     ` <button class="link" id="btnReencenar">reencenar</button>`;
   $('btnVerAta').onclick = mostrarAta;
@@ -124,7 +126,10 @@ function mostrarAta() {
   const a = ultimaSala?.ata;
   if (!a) return;
   const lista = (arr, fn) => (arr?.length ? '<ul>' + arr.map(fn).join('') + '</ul>' : '<p class="fraco">—</p>');
+  const leituras = a.leituras || [];
   const recos = a.recomendacoes || [];
+  const teses = a.movimento_teses || [];
+  const avisos = a.avisos || [];
   const entregas = a.entregas || [];
   const reprovadas = a.reprovadas || [];
   abrirPainel(`
@@ -133,18 +138,36 @@ function mostrarAta() {
     <p><a class="link-ata" href="/ata?sessao=${encodeURIComponent(a.sessao)}" target="_blank" rel="noopener">📄 abrir a ata completa em página própria</a> — é este link que sai no Google Chat.</p>
     ${a.resumo_curto ? `<p><b>${esc(a.resumo_curto)}</b></p>` : ''}
 
-    <label>🎯 O que a mesa recomenda</label>
-    ${recos.length
-      ? recos.map((r) => `<div class="item"><b>${esc(r.o_que)}</b><br>
-          <span class="fraco">${esc(r.por_que || '')}</span><br>
-          <span class="rodada">${esc(nomeDe(r.quem))}${r.ate_quando ? ' · até ' + esc(r.ate_quando) : ''}</span>
-          ${r.risco ? `<br><span class="fraco">⚠ ${esc(r.risco)}</span>` : ''}</div>`).join('')
-      : '<p class="fraco">Nada recomendado nesta rodada — o dado de hoje não sustentou decisão nova.</p>'}
+    <label>🧭 O que o mercado está pedindo</label>
+    ${leituras.length
+      ? leituras.map((l) => `<div class="item"><b>${esc(l.o_que_o_mercado_pede)}</b><br>
+          <span class="fraco">${esc(l.evidencia || '')} (confiança ${esc(l.confianca || '—')})</span><br>
+          <span class="rodada">↳ como cabe: ${esc(l.como_cabe || '—')}</span>
+          ${l.o_que_confirma ? `<br><span class="fraco">🔭 confirma ou derruba amanhã: ${esc(l.o_que_confirma)}</span>` : ''}</div>`).join('')
+      : recos.length
+        ? '<p class="fraco">Ata antiga, de quando a mesa entregava recomendação tática:</p>' +
+          recos.map((r) => `<div class="item"><b>${esc(r.o_que)}</b><br>
+            <span class="fraco">${esc(r.por_que || '')}</span><br>
+            <span class="rodada">${esc(nomeDe(r.quem))}${r.ate_quando ? ' · até ' + esc(r.ate_quando) : ''}</span></div>`).join('')
+        : '<p class="fraco">Nada lido nesta rodada — o dado de hoje não sustentou leitura nova.</p>'}
+
+    ${teses.length ? `<label>🧵 As teses da mesa</label>
+      <p class="fraco">O fio que liga uma reunião à seguinte. Tese parada há uma semana sai de cena sozinha.</p>` +
+      teses.map((m) => {
+        const icone = m.movimento === 'caiu' ? '✕' : m.movimento === 'nasceu' ? '✦' : m.movimento === 'parada' ? '·' : '↑';
+        return `<div class="item">${icone} <b>${esc(m.afirmacao)}</b><br>
+          <span class="fraco">${esc(m.o_que_mudou || '')}${m.movimento === 'confirmou' ? ` · ${m.rodadas} rodadas de pé` : ''}</span></div>`;
+      }).join('') : ''}
 
     ${reprovadas.length ? `<label>🚫 Barradas na conferência (${reprovadas.length})</label>
-      <p class="fraco">A mesa tentou entregar isto e a régua barrou: toda recomendação precisa de clube, produto,
-      número e prazo.</p>` + reprovadas.map((x) => `<div class="item">${esc(x.o_que)}<br>
+      <p class="fraco">A mesa tentou entregar isto e a régua barrou: toda leitura precisa da categoria com nome,
+      de um número medido hoje, da ponte para um produto da casa e do que a confirmaria amanhã.</p>` +
+      reprovadas.map((x) => `<div class="item">${esc(x.o_que)}<br>
         <span class="fraco">${(x.motivos || []).map(esc).join(' · ')}</span></div>`).join('') : ''}
+
+    ${avisos.length ? `<label>⚠ Números que não bateram (${avisos.length})</label>
+      <p class="fraco">Passaram, mas citam número que não corresponde ao medido hoje. Pode ser conta derivada.</p>` +
+      avisos.map((x) => `<div class="item"><span class="fraco">${esc(x)}</span></div>`).join('') : ''}
 
     ${a.precisamos_de_voce ? `<label>🙋 A mesa precisa de você</label><p>${esc(a.precisamos_de_voce)}</p>` : ''}
 
@@ -160,7 +183,7 @@ function mostrarAta() {
     <label>📋 Quem faz o quê até a próxima</label>${lista(a.acoes, (x) => `<li><b>${esc(nomeDe(x.agente))}</b>: ${esc(x.acao)}</li>`)}
 
     <label>Achou fraco? Fale com eles</label>
-    <textarea id="campoFeedbackAta" placeholder="ex.: essa recomendação é genérica demais, quero número em cima de clube pequeno"></textarea>
+    <textarea id="campoFeedbackAta" placeholder="ex.: essa leitura ficou rasa, quero a ponte de produto mais concreta"></textarea>
     <button class="acao" id="btnFeedbackAta">Mandar feedback pra mesa</button>
     <div id="statusFeedbackAta" class="fraco"></div>
 
@@ -236,7 +259,7 @@ async function abrirCoordenar() {
 
     <label>🗣 Feedback</label>
     <p class="fraco">Correção de rumo. Entra no prompt de todos (ou de um só) e fica lá até você arquivar.</p>
-    <textarea id="campoNovoFeedback" placeholder="ex.: as recomendações estão genéricas. quero nome de produto e prazo, não 'explorar oportunidades'"></textarea>
+    <textarea id="campoNovoFeedback" placeholder="ex.: as leituras estão rasas. quero categoria com número medido e como isso vira produto nosso"></textarea>
     <select id="campoFeedbackPara"><option value="">pra mesa toda</option>
       ${agentes.map((a) => `<option value="${esc(a.chave)}">só pra ${esc(a.nome)}</option>`).join('')}</select>
     <button class="acao secundaria" id="btnNovoFeedback">Mandar o feedback</button>
@@ -479,8 +502,8 @@ $('btnConvocar').onclick = async () => {
     });
     const j = await res.json();
     if (!res.ok) { status.textContent = 'erro: ' + (j.error || 'falhou'); encerrarReuniao(); return; }
-    const reco = (j.ata?.recomendacoes || []).length;
-    status.textContent = `reunião fechada — ${j.etapas.length} falas, ${reco} recomendação(ões).` + (j.webhook ? ` webhook: ${j.webhook.detalhe}` : '');
+    const reco = (j.ata?.leituras || []).length;
+    status.textContent = `reunião fechada — ${j.etapas.length} falas, ${reco} leitura(s).` + (j.webhook ? ` webhook: ${j.webhook.detalhe}` : '');
     await carregarSala(j.sessao);
     encenar(ultimaSala.falas);
   } catch (e) {
@@ -496,7 +519,7 @@ $('btnAutomatica').onclick = async () => {
     const res = await fetch('/tasks/reuniao?manual=1', { method: 'POST' });
     const j = await res.json();
     status.textContent = j.ok
-      ? `pronta: ${j.tema} · ${j.recomendacoes ?? 0} recomendação(ões) · webhook: ${j.webhook?.detalhe || '—'}`
+      ? `pronta: ${j.tema} · ${j.leituras ?? 0} leitura(s) · webhook: ${j.webhook?.detalhe || '—'}`
       : 'erro: ' + (j.error || 'falhou');
     if (j.sessao) { await carregarSala(j.sessao); encenar(ultimaSala.falas); }
   } catch (e) { status.textContent = 'falhou: ' + e; }
@@ -552,7 +575,11 @@ $('btnCorredor').onclick = async () => {
 $('btnAtas').onclick = async () => {
   const res = await fetch('/api/atas');
   const j = await res.json();
-  const recoDe = (a) => { try { return JSON.parse(a.recomendacoes || '[]'); } catch { return []; } };
+  const recoDe = (a) => {
+    const leituras = (() => { try { return JSON.parse(a.leituras || '[]'); } catch { return []; } })();
+    if (leituras.length) return leituras.map((l) => ({ o_que: l.o_que_o_mercado_pede }));
+    try { return JSON.parse(a.recomendacoes || '[]'); } catch { return []; }
+  };
   abrirPainel(`
     <h2>Reuniões</h2>
     ${(j.atas || []).length ? (j.atas || []).map((a) => {
@@ -561,7 +588,7 @@ $('btnAtas').onclick = async () => {
       <div class="item">
         <b>${a.automatica ? '🤖' : '📣'} ${esc(a.tema)}</b>
         <div class="fraco">${esc(new Date(a.quando).toLocaleString('pt-BR', { timeZone: 'America/Fortaleza' }))} · webhook: ${esc(a.webhook_status || '—')}</div>
-        ${r ? `<div>🎯 ${esc(r.o_que)}</div>` : `<div class="fraco">sem recomendação</div>`}
+        ${r ? `<div>🧭 ${esc(r.o_que)}</div>` : `<div class="fraco">sem leitura</div>`}
         <div>${esc(String(a.resumo_curto || a.resumo || '').slice(0, 200))}</div>
         <button class="link" data-sessao="${esc(a.sessao)}">abrir e reencenar</button>
       </div>`;
