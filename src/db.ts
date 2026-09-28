@@ -99,6 +99,9 @@ export async function migrar(env: Env) {
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN leituras TEXT', []); } catch { /* já existe */ }
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN movimento_teses TEXT', []); } catch { /* já existe */ }
   try { await env.DB.exec('ALTER TABLE atas ADD COLUMN avisos TEXT', []); } catch { /* já existe */ }
+  // 28/09/2026: a ata em forma de conversa (src/mercado/sintese.ts) — feedback
+  // geral e "achamos que…". É o que o e-mail mostra; a leitura segue em `leituras`.
+  try { await env.DB.exec('ALTER TABLE atas ADD COLUMN sintese TEXT', []); } catch { /* já existe */ }
 
   // FALAS: a linha do tempo da reunião em texto curto, do jeito que a salinha
   // 16-bit precisa pra reencenar a conversa em balões sobre os sprites.

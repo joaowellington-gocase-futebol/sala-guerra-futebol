@@ -51,6 +51,7 @@ import {
   montarMapaDeDemanda, formatarMapaDeDemanda, numerosDaRodada, numerosDeProcura,
 } from './mercado/demanda';
 import { fecharComLeitura, leiturasAnteriores, type Leitura } from './mercado/leitura';
+import { sintetizarParaOJoao, type Sintese } from './mercado/sintese';
 import { medirLeiturasAnteriores, formatarPlacar } from './placar';
 import {
   tesesVivas, podarTeses, movimentoDaRodada, formatarMovimento,
@@ -106,6 +107,8 @@ export interface Ata {
   reprovadas: { o_que: string; motivos: string[] }[];
   entregas: EntregaDeDemanda[];
   precisamos_de_voce: string;
+  /** A ata em forma de conversa — feedback geral + "achamos que…". É o que vai no e-mail/Chat desde 28/09/2026. */
+  sintese: Sintese;
 }
 
 // Quem entra com FATO, antes de qualquer opinião. São só dois porque são os
@@ -717,6 +720,23 @@ export async function rodarReuniao(
     } catch { /* registro auxiliar */ }
   }
 
+  // ── 6.5. A SÍNTESE — a ata em 30 segundos de leitura ───────────────────
+  //
+  // O João lê a ata no e-mail. Ele pediu um feedback geral e ideias no formato
+  // "achamos que X, porque Y" — ver src/mercado/sintese.ts. A leitura acima
+  // continua inteira na página da ata; aqui ela só é traduzida.
+  const sintese = await sintetizarParaOJoao(env, {
+    tema,
+    se_eu_fosse_voce: fecho.se_eu_fosse_voce,
+    leituras: fecho.leituras,
+    lentes: textoLentes,
+    teses: movimento.length ? formatarMovimento(movimento) : '',
+    entregas: entregas.map((e) => `- ${e.nome}: ${e.entrega.slice(0, 300)}`).join('\n'),
+    precisamos_de_voce: fecho.precisamos_de_voce,
+    material: linhasDeMaterial.slice(0, 14),
+    conferencia: achado + '\n' + formatarMapaDeDemanda(mapa) + '\n' + formatarProcura(mundo.procura),
+  });
+
   // ── 7. A ROTINA — a Val cobra o que ficou parado ────────────────────────
   const produtor = acharAgente('produtor')!;
   const fonteProdutor = await buscarFonteAutomatica(env, 'produtor', mundo, vitrine);
@@ -813,13 +833,14 @@ export async function rodarReuniao(
     reprovadas: fecho.reprovadas,
     entregas,
     precisamos_de_voce: fecho.precisamos_de_voce,
+    sintese,
   };
 
   try {
     await env.DB.exec(
-      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, entregas, precisamos_de_voce, reprovadas, leituras, movimento_teses, avisos)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(sessao) DO UPDATE SET tema=excluded.tema, resumo=excluded.resumo,
+      `INSERT INTO atas (sessao, tema, quando, automatica, resumo, resumo_curto, consenso, divergencias, acoes, placar_vendas, webhook_status, impressao, modo, entregas, precisamos_de_voce, reprovadas, leituras, movimento_teses, avisos, sintese)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(sessao) DO UPDATE SET tema=excluded.tema, resumo=excluded.resumo, sintese=excluded.sintese,
          resumo_curto=excluded.resumo_curto, consenso=excluded.consenso,
          divergencias=excluded.divergencias, acoes=excluded.acoes, placar_vendas=excluded.placar_vendas,
          impressao=excluded.impressao, modo=excluded.modo,
@@ -830,7 +851,7 @@ export async function rodarReuniao(
        JSON.stringify(ata.divergencias), JSON.stringify(ata.acoes), ata.placar_vendas, 'pendente',
        impressao, 'completa', JSON.stringify(ata.entregas),
        ata.precisamos_de_voce, JSON.stringify(ata.reprovadas), JSON.stringify(ata.leituras),
-       JSON.stringify(ata.movimento_das_teses), JSON.stringify(ata.avisos)],
+       JSON.stringify(ata.movimento_das_teses), JSON.stringify(ata.avisos), JSON.stringify(ata.sintese)],
     );
   } catch { /* a ata em memória segue válida pro webhook */ }
 
@@ -911,6 +932,7 @@ async function rodarRevisao(
       .map((c) => ({ agente: String(c.agente), acao: String(c.tarefa) })),
     placar_vendas: '',
     leituras: [], movimento_das_teses: [], avisos: [], reprovadas: [], entregas: [], precisamos_de_voce: '',
+    sintese: { feedback_geral: '', achamos: [], pedido: '' },
   };
 
   try {

@@ -15,6 +15,13 @@
 // A ordem do card mudou em 15/09/2026 junto com a mesa: primeiro o que fazer,
 // depois o porquê. Antes ele abria com o que a casa passou a acreditar, e o
 // João lia três linhas de leitura de mercado sem nunca chegar a uma decisão.
+//
+// Em 28/09/2026 encolheu de novo, a pedido dele: "queria que a ata no email
+// fosse um pouco mais resumida — um feedback geral, e um tema tipo 'achamos
+// que futebol e fontes únicas combinam, por XYZ'". O card agora é só a síntese
+// (src/mercado/sintese.ts); evidência, ponte de produto, teses, placar e o que
+// caiu por terra moram na página da ata. Ata antiga, sem síntese, cai no
+// formato anterior.
 
 import type { Env } from './aiproxy';
 import { lerConfig } from './db';
@@ -41,6 +48,8 @@ export interface AtaParaWebhook {
   /** Quantas recomendações o juiz barrou por genéricas. Aparece no card como aviso de calibragem. */
   reprovadas: number;
   precisamos_de_voce: string;
+  /** Feedback geral + "achamos que…". Quando vem preenchida, é só ela que entra no card. */
+  sintese?: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string };
   url: string;        // a salinha, reencenando esta reunião
   urlAta: string;     // a ata completa desta reunião
 }
@@ -50,8 +59,45 @@ function limitar(s: string, n: number): string {
   return t.length > n ? t.slice(0, n - 1) + '…' : t;
 }
 
+/** O card curto: feedback geral, o que achamos, o que precisa dele, e o link. */
+function corpoSintese(ata: AtaParaWebhook): unknown {
+  const s = ata.sintese!;
+  const linhas: string[] = [];
+
+  linhas.push(`*⚽ ${limitar(ata.tema, 110)}*`);
+  linhas.push(`_${ata.automatica ? 'reunião automática' : 'reunião convocada'} · ${horaDeFortaleza(ata.quando)}_`);
+
+  if (s.feedback_geral) {
+    linhas.push('');
+    linhas.push(`*Feedback geral:* ${s.feedback_geral}`);
+  }
+
+  if (s.achamos.length) {
+    linhas.push('');
+    for (const a of s.achamos) {
+      linhas.push(`💡 *${a.ideia.replace(/[.…]$/, '')}* — ${a.porque}`);
+    }
+  }
+
+  if (s.pedido) {
+    linhas.push('');
+    linhas.push(`🙋 *Precisa de você:* ${s.pedido}`);
+  }
+
+  if (ata.entregas?.length) {
+    const n = ata.entregas.length;
+    linhas.push(`📮 _${n === 1 ? 'Respondemos 1 pedido seu' : `Respondemos ${n} pedidos seus`} — está na ata._`);
+  }
+
+  linhas.push('');
+  linhas.push(`<${ata.urlAta}|📄 Ata completa, com números e fontes>  ·  <${ata.url}|🕹 Salinha>`);
+
+  return { text: linhas.join('\n') };
+}
+
 /** Card do Google Chat. Texto em Markdown do Chat (*negrito*), sem HTML. */
-function corpoGoogleChat(ata: AtaParaWebhook): unknown {
+export function corpoGoogleChat(ata: AtaParaWebhook): unknown {
+  if (ata.sintese && (ata.sintese.feedback_geral || ata.sintese.achamos.length)) return corpoSintese(ata);
   const linhas: string[] = [];
 
   linhas.push(`*⚽ ${limitar(ata.tema, 110)}*`);

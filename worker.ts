@@ -24,7 +24,8 @@ import { migrar, inserirEmLotes, lerConfig, gravarConfig } from './src/db';
 import { entregarRecados, registrarRecados, formatarRecadosParaPrompt, quadroDaSessao } from './src/mesa';
 import { memoriaDaSala, lembrar, gravarMemoria } from './src/memoria';
 import { rodarReuniao, buscarFonteAutomatica, type ResultadoReuniao } from './src/reuniao';
-import { dispararWebhook, resolverUrlWebhook, mandarAvisoCurto, type AtaParaWebhook } from './src/webhook';
+import { dispararWebhook, resolverUrlWebhook, mandarAvisoCurto, corpoGoogleChat, type AtaParaWebhook } from './src/webhook';
+import { sintetizarParaOJoao } from './src/mercado/sintese';
 import { renderizarPaginaAta } from './src/paginaAta';
 import { renderizarPaginaBoletim } from './src/paginaBoletim';
 import { gerarBoletim } from './src/boletim';
@@ -71,6 +72,7 @@ function paraWebhook(r: ResultadoReuniao, origem: string): AtaParaWebhook {
     reprovadas: r.ata.reprovadas.length,
     entregas: r.ata.entregas.map((e) => ({ nome: e.nome, entrega: e.entrega, pronta: e.pronta })),
     precisamos_de_voce: r.ata.precisamos_de_voce,
+    sintese: r.ata.sintese,
     url: `${origem}/index.html?sessao=${encodeURIComponent(r.sessao)}`,
     urlAta: `${origem}/ata?sessao=${encodeURIComponent(r.sessao)}`,
   };
@@ -336,11 +338,49 @@ export default {
             recomendacoes: seguro(ata.recomendacoes), entregas: seguro(ata.entregas),
             reprovadas: seguro(ata.reprovadas),
             precisamos_de_voce: String(ata.precisamos_de_voce || ''),
+            sintese: (() => { try { return JSON.parse(String(ata.sintese || 'null')); } catch { return null; } })(),
           },
           falas: falas.rows,
           conversas,
           estados: estados.rows,
         });
+      }
+
+      // Prévia do card resumido sobre uma ata JÁ gravada: refaz só a síntese
+      // (uma chamada de IA), sem gravar nada e sem mandar nada. Serve pra
+      // calibrar o formato sem convocar reunião — que mexe em teses e contadores.
+      if (p === '/api/sintese/previa') {
+        const pedida = (url.searchParams.get('sessao') || '').slice(0, 80);
+        const q = pedida
+          ? await env.DB.query('SELECT * FROM atas WHERE sessao = ?', [pedida])
+          : await env.DB.query("SELECT * FROM atas WHERE modo = 'completa' ORDER BY quando DESC LIMIT 1", []);
+        const ata = q.rows[0];
+        if (!ata) return json({ error: 'Ata não encontrada.' }, 404);
+        const seguro = (s: unknown) => { try { return JSON.parse(String(s || '[]')); } catch { return []; } };
+        const leituras = seguro(ata.leituras);
+        const movimento: { afirmacao: string; movimento: string }[] = seguro(ata.movimento_teses);
+        const entregas: { nome: string; entrega: string; pronta: boolean }[] = seguro(ata.entregas);
+        const sintese = await sintetizarParaOJoao(env, {
+          tema: String(ata.tema || ''),
+          se_eu_fosse_voce: String(ata.resumo_curto || ''),
+          leituras,
+          lentes: '',
+          teses: movimento.map((m) => `- [${m.movimento}] ${m.afirmacao}`).join('\n'),
+          entregas: entregas.map((e) => `- ${e.nome}: ${String(e.entrega).slice(0, 300)}`).join('\n'),
+          precisamos_de_voce: String(ata.precisamos_de_voce || ''),
+          material: [],
+          conferencia: String(ata.resumo || ''),
+        });
+        const card = corpoGoogleChat({
+          sessao: String(ata.sessao), tema: String(ata.tema), quando: String(ata.quando), automatica: !!ata.automatica,
+          resumo: '', resumo_curto: '', consenso: [], divergencias: [], acoes: [], placar_vendas: '',
+          leituras: [], movimento_das_teses: [], reprovadas: 0,
+          entregas: entregas.map((e) => ({ nome: e.nome, entrega: e.entrega, pronta: e.pronta })),
+          precisamos_de_voce: '', sintese,
+          url: `${url.origin}/index.html?sessao=${encodeURIComponent(String(ata.sessao))}`,
+          urlAta: `${url.origin}/ata?sessao=${encodeURIComponent(String(ata.sessao))}`,
+        }) as { text: string };
+        return json({ sessao: ata.sessao, sintese, card: card.text });
       }
 
       if (p === '/api/atas') {
@@ -437,6 +477,11 @@ export default {
           movimento_das_teses: [],
           reprovadas: 0,
           entregas: [], precisamos_de_voce: '',
+          sintese: {
+            feedback_geral: 'Webhook ligado. Daqui pra frente a ata de cada reunião cai aqui, uma vez por dia, neste formato.',
+            achamos: [{ ideia: 'Achamos que o canal está certo', porque: 'esta mensagem chegou.' }],
+            pedido: '',
+          },
           url: url.origin + '/index.html', urlAta: url.origin + '/ata',
         });
         return json(r, r.ok ? 200 : 502);

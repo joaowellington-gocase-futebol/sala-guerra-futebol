@@ -57,6 +57,7 @@ ul{margin:8px 0;padding-left:20px}li{margin-bottom:7px}
 .entrega .cab b{color:var(--ouro);font-size:14px}
 .entrega .falta{color:var(--vermelho);font-size:13px;margin-top:7px}
 .pedido{color:var(--fraco);font-size:13px;font-style:italic;margin-bottom:8px;border-left:2px solid var(--borda);padding-left:9px}
+.achamos{margin-top:10px;font-size:15px}
 .chamada{background:#241c3a;border:1px solid var(--ouro);border-radius:8px;padding:14px 16px;margin:16px 0;font-size:16px;line-height:1.5}
 .fala{border-left:3px solid var(--borda);padding:8px 0 8px 12px;margin-bottom:12px}
 .fala .cab{font-size:12px;color:var(--fraco);margin-bottom:3px}
@@ -106,6 +107,10 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
   const recomendacoes: { o_que: string; por_que: string; quem: string; ate_quando: string; risco: string }[] = jsonSeguro(ata.recomendacoes);
   const entregas: { id: number; nome: string; entrega: string; o_que_falta: string; pronta: boolean }[] = jsonSeguro(ata.entregas);
   const reprovadas: { o_que: string; motivos: string[] }[] = jsonSeguro(ata.reprovadas);
+  // A ata em forma de conversa (28/09/2026). Atas de antes não têm, e a página
+  // cai no resumo curto de sempre.
+  const sintese: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string } | null =
+    jsonSeguro(ata.sintese, null);
 
   // O pedido original de cada entrega, pra página mostrar o que foi pedido ao
   // lado do que veio — sem isso a entrega aparece solta e não dá pra julgar.
@@ -126,7 +131,11 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
     <div class="meta">${esc(quando(ata.quando))} · sessão <code>${esc(sessao)}</code> · webhook: ${esc(ata.webhook_status || 'não enviado')}</div>
   </div>
 
-  ${ata.resumo_curto ? `<div class="chamada"><b>${esc(ata.resumo_curto)}</b></div>` : ''}
+  ${sintese && (sintese.feedback_geral || sintese.achamos?.length) ? `
+  <div class="chamada">
+    ${sintese.feedback_geral ? `<b>Feedback geral:</b> ${esc(sintese.feedback_geral)}` : ''}
+    ${(sintese.achamos || []).map((x) => `<div class="achamos">💡 <b>${esc(x.ideia)}</b> — ${esc(x.porque)}</div>`).join('')}
+  </div>` : ata.resumo_curto ? `<div class="chamada"><b>${esc(ata.resumo_curto)}</b></div>` : ''}
 
   <h2>🧭 O que o mercado está pedindo</h2>
   ${leituras.length ? leituras.map((l) => `
