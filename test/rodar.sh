@@ -6,3 +6,4 @@ set -e
 cd "$(dirname "$0")/.."
 npx --yes tsx test/juiz.ts
 npx --yes tsx test/sintese.ts
+npx --yes tsx test/parecer.ts

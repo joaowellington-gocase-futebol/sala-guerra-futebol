@@ -6,6 +6,7 @@
 // e o que ela entregou do que o João pediu; depois a investigação que
 // sustenta isso; por último a transcrição, pra quem quiser auditar.
 
+import { NOME_DO_FORMATO, type Parecer } from './mercado/parecer';
 import type { Env } from './aiproxy';
 import { AGENTES } from './agentes';
 import { PESSOAS } from './pessoas';
@@ -70,7 +71,54 @@ pre{background:#0b0913;border:1px solid var(--borda);border-radius:5px;padding:1
 .botao{display:inline-block;background:var(--ouro);color:#241900;text-decoration:none;font-weight:700;font-size:14px;padding:10px 16px;border-radius:5px}
 .botao.calmo{background:var(--cartao);color:var(--texto);border:1px solid var(--borda)}
 .vazio{color:var(--fraco);font-style:italic}
+.parecer{background:#241c3a;border:1px solid var(--ouro);border-radius:10px;padding:16px 18px;margin:16px 0;line-height:1.5}
+.parecer .formato{display:inline-block;font-size:11px;letter-spacing:.09em;text-transform:uppercase;font-weight:800;color:#241900;background:var(--ouro);padding:3px 9px;border-radius:3px}
+.parecer .veredito{font-size:19px;font-weight:700;margin:9px 0 6px}
+.parecer .momento{color:var(--fraco);font-size:14.5px}
+.conceito{background:var(--cartao);border:1px solid var(--borda);border-radius:8px;padding:13px 15px;margin:12px 0}
+.conceito .nome{font-size:17px;font-weight:800;color:var(--ouro)}
+.conceito .peca{margin-top:6px;font-size:14px}
+.sinal{font-size:13.5px;margin-bottom:6px}
+.forca{display:inline-block;min-width:52px;font-size:10px;text-transform:uppercase;letter-spacing:.07em;border:1px solid var(--borda);border-radius:3px;padding:1px 5px;margin-right:6px;text-align:center}
+.forca.forte{color:var(--verde);border-color:var(--verde)}.forca.fraco{color:var(--fraco)}
+.base{color:var(--fraco);font-size:12px;font-style:italic}
 `;
+
+const BASE_LEGIVEL: Record<string, string> = {
+  medido: 'medido hoje', calendario: 'calendário e tabela', leitura_de_mercado: 'leitura de mercado',
+};
+
+/** O parecer de coleção no topo da ata: decisão, porquês, conceito, sinais, e o contraponto. */
+function blocoDoParecer(p: Parecer): string {
+  return `
+  <div class="parecer">
+    <span class="formato">${esc(NOME_DO_FORMATO[p.formato])}</span>
+    <div class="veredito">${esc(p.veredito)}</div>
+    ${p.momento ? `<div class="momento">${esc(p.momento)}</div>` : ''}
+    ${p.porques.map((x) => `<div class="achamos">💡 <b>${esc(x.ideia)}</b> — ${esc(x.porque)} <span class="base">(${esc(BASE_LEGIVEL[x.base] || x.base)})</span></div>`).join('')}
+  </div>
+  ${p.conceito ? `
+  <div class="conceito">
+    <div class="nome">🎨 ${esc(p.conceito.nome)}</div>
+    <div>${esc(p.conceito.ideia)}</div>
+    ${p.conceito.linguagem_visual ? `<div class="linha" style="color:var(--fraco);font-size:13.5px;margin-top:5px">Linguagem visual: ${esc(p.conceito.linguagem_visual)}</div>` : ''}
+    ${p.conceito.pecas.map((x) => `<div class="peca">• <b>${esc(x.produto)}</b> — ${esc(x.o_que_e)}</div>`).join('')}
+    ${p.conceito.janela ? `<div class="peca">🗓 ${esc(p.conceito.janela)}</div>` : ''}
+  </div>` : ''}
+  ${p.drops.length ? `
+  <div class="conceito">
+    <div class="nome">Os drops</div>
+    ${p.drops.map((x) => `<div class="peca">• <b>${esc(x.produto)}</b> — ${esc(x.gatilho)}${x.quando ? ` <span class="base">(${esc(x.quando)})</span>` : ''}</div>`).join('')}
+  </div>` : ''}
+  ${p.sinais.length ? `<h2>📡 Os sinais que pesaram</h2>
+  ${p.sinais.map((x) => `<div class="sinal"><span class="forca ${esc(x.forca)}">${esc(x.forca)}</span><b>${esc(x.sinal)}</b> — ${esc(x.leitura)}</div>`).join('')}` : ''}
+  <h2>⚖️ O contraponto</h2>
+  ${p.descartamos ? `<div class="sinal">↩️ <b>Descartamos ${esc(NOME_DO_FORMATO[p.descartamos.formato].toLowerCase())}:</b> ${esc(p.descartamos.por_que)}</div>` : ''}
+  ${p.riscos.map((r) => `<div class="sinal">⚠ ${esc(r)}</div>`).join('')}
+  ${p.muda_de_ideia_se ? `<div class="sinal">🔄 <b>Mudamos de ideia se:</b> ${esc(p.muda_de_ideia_se)}</div>` : ''}
+  ${p.a_banca_mudou ? `<div class="sinal base">A banca: ${esc(p.a_banca_mudou)}</div>` : ''}
+  ${p.ajustes.length ? `<details><summary>Conferência automática (${p.ajustes.length})</summary><ul>${p.ajustes.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></details>` : ''}`;
+}
 
 export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida: string): Promise<Response> {
   const q = sessaoPedida
@@ -109,7 +157,7 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
   const reprovadas: { o_que: string; motivos: string[] }[] = jsonSeguro(ata.reprovadas);
   // A ata em forma de conversa (28/09/2026). Atas de antes não têm, e a página
   // cai no resumo curto de sempre.
-  const sintese: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string } | null =
+  const sintese: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string; parecer?: Parecer } | null =
     jsonSeguro(ata.sintese, null);
 
   // O pedido original de cada entrega, pra página mostrar o que foi pedido ao
@@ -131,7 +179,7 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
     <div class="meta">${esc(quando(ata.quando))} · sessão <code>${esc(sessao)}</code> · webhook: ${esc(ata.webhook_status || 'não enviado')}</div>
   </div>
 
-  ${sintese && (sintese.feedback_geral || sintese.achamos?.length) ? `
+  ${sintese?.parecer ? blocoDoParecer(sintese.parecer) : sintese && (sintese.feedback_geral || sintese.achamos?.length) ? `
   <div class="chamada">
     ${sintese.feedback_geral ? `<b>Feedback geral:</b> ${esc(sintese.feedback_geral)}` : ''}
     ${(sintese.achamos || []).map((x) => `<div class="achamos">💡 <b>${esc(x.ideia)}</b> — ${esc(x.porque)}</div>`).join('')}

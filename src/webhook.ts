@@ -25,6 +25,7 @@
 
 import type { Env } from './aiproxy';
 import { lerConfig } from './db';
+import { linhasDoCard, type Parecer } from './mercado/parecer';
 
 export interface AtaParaWebhook {
   sessao: string;
@@ -49,7 +50,7 @@ export interface AtaParaWebhook {
   reprovadas: number;
   precisamos_de_voce: string;
   /** Feedback geral + "achamos que…". Quando vem preenchida, é só ela que entra no card. */
-  sintese?: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string };
+  sintese?: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string; parecer?: Parecer };
   url: string;        // a salinha, reencenando esta reunião
   urlAta: string;     // a ata completa desta reunião
 }
@@ -67,12 +68,18 @@ function corpoSintese(ata: AtaParaWebhook): unknown {
   linhas.push(`*⚽ ${limitar(ata.tema, 110)}*`);
   linhas.push(`_${ata.automatica ? 'reunião automática' : 'reunião convocada'} · ${horaDeFortaleza(ata.quando)}_`);
 
-  if (s.feedback_geral) {
+  // Desde 29/09/2026 o card abre pela DECISÃO de coleção (src/mercado/parecer.ts).
+  if (s.parecer) {
+    linhas.push('');
+    linhas.push(...linhasDoCard(s.parecer));
+  }
+
+  if (!s.parecer && s.feedback_geral) {
     linhas.push('');
     linhas.push(`*Feedback geral:* ${s.feedback_geral}`);
   }
 
-  if (s.achamos.length) {
+  if (!s.parecer && s.achamos.length) {
     linhas.push('');
     for (const a of s.achamos) {
       linhas.push(`💡 *${a.ideia.replace(/[.…]$/, '')}* — ${a.porque}`);

@@ -383,6 +383,34 @@ export default {
         return json({ sessao: ata.sessao, sintese, card: card.text });
       }
 
+      // Prévia do PARECER DE COLEÇÃO (29/09/2026): coleta o mundo agora, roda o
+      // comitê e a banca, e devolve o parecer e o card — sem gravar ata, sem
+      // mexer em tese e sem mandar nada. É como calibrar o formato sem convocar.
+      if (p === '/api/parecer/previa') {
+        const { buscarMundo } = await import('./src/web/mundo');
+        const { buscarVitrine } = await import('./src/web/vitrine');
+        const { buscarTabela } = await import('./src/web/tabela');
+        const { montarMapaDeDemanda } = await import('./src/mercado/demanda');
+        const { direcaoAberta } = await import('./src/direcao');
+        const pm = await import('./src/mercado/parecer');
+        const [mundo, vitrine, tabela, direcao] = await Promise.all([buscarMundo(), buscarVitrine(), buscarTabela(), direcaoAberta(env)]);
+        const mapa = montarMapaDeDemanda(vitrine, mundo);
+        const pauta = (url.searchParams.get('pauta') || '').slice(0, 300) || direcao.tema?.texto || '';
+        const t0 = Date.now();
+        const { parecer, erro } = await pm.emitirParecer(env, {
+          pauta,
+          direcao: pm.textoDaDirecao(direcao),
+          blocos: pm.blocosDoParecer({ mundo, mapa, tabela }),
+          mesa: '',
+          anteriores: await pm.vereditosAnteriores(env),
+        });
+        return json({
+          ms: Date.now() - t0, erro: erro || null, parecer,
+          card: parecer ? pm.linhasDoCard(parecer).join('\n') : null,
+          fontes_com_falha: [...mundo.falhas, ...vitrine.falhas, ...(tabela.ok ? [] : ['tabela: ' + tabela.erro])],
+        }, parecer ? 200 : 502);
+      }
+
       if (p === '/api/atas') {
         const q = await env.DB.query(
           'SELECT sessao, tema, quando, automatica, resumo, resumo_curto, placar_vendas, webhook_status, modo, leituras, recomendacoes FROM atas ORDER BY quando DESC LIMIT 30', []);

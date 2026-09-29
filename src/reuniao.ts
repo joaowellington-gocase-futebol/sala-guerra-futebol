@@ -51,7 +51,9 @@ import {
   montarMapaDeDemanda, formatarMapaDeDemanda, numerosDaRodada, numerosDeProcura,
 } from './mercado/demanda';
 import { fecharComLeitura, leiturasAnteriores, type Leitura } from './mercado/leitura';
-import { sintetizarParaOJoao, type Sintese } from './mercado/sintese';
+import { sintetizarParaOJoao, sinteseDoParecer, type Sintese } from './mercado/sintese';
+import { emitirParecer, blocosDoParecer, textoDaDirecao, vereditosAnteriores } from './mercado/parecer';
+import { buscarTabela } from './web/tabela';
 import { medirLeiturasAnteriores, formatarPlacar } from './placar';
 import {
   tesesVivas, podarTeses, movimentoDaRodada, formatarMovimento,
@@ -390,7 +392,7 @@ export async function rodarReuniao(
   // de falar no vácuo, que era a queixa do João em 16/09.
   // O mundo primeiro: ele traz o calendário, que o cardápio reaproveita em vez
   // de varrer o globoesporte de novo.
-  const [mundo, vitrine] = await Promise.all([buscarMundo(), buscarVitrine()]);
+  const [mundo, vitrine, tabela] = await Promise.all([buscarMundo(), buscarVitrine(), buscarTabela()]);
   const cardapio = montarCardapio(mundo, vitrine);
   // O mapa de demanda é o corte transversal dos catálogos: é ele que responde
   // "o que o público masculino tem procurado" em categoria e preço, que é o
@@ -725,7 +727,31 @@ export async function rodarReuniao(
   // O João lê a ata no e-mail. Ele pediu um feedback geral e ideias no formato
   // "achamos que X, porque Y" — ver src/mercado/sintese.ts. A leitura acima
   // continua inteira na página da ata; aqui ela só é traduzida.
-  const sintese = await sintetizarParaOJoao(env, {
+  // ── 6.4. O PARECER DE COLEÇÃO — a decisão, não a leitura ───────────────
+  //
+  // Entrou em 29/09/2026: "não me diz nada que eu já não saiba — quero
+  // 'achamos interessante uma coleção estruturada em tema tal', ou 'não
+  // recomendamos, drops isolados'". O comitê decide o formato com a tabela e o
+  // calendário comercial na mão, e uma banca cética reescreve. Ver
+  // src/mercado/parecer.ts. Se falhar, a síntese de antes segue valendo.
+  const { parecer, erro: erroDoParecer } = await emitirParecer(env, {
+    pauta: tema,
+    direcao: textoDaDirecao(direcao),
+    blocos: blocosDoParecer({ mundo, mapa, tabela }),
+    mesa: [
+      fecho.leituras.length
+        ? 'LEITURAS CONFERIDAS:\n' + fecho.leituras.map((l) =>
+          `- ${l.o_que_o_mercado_pede} (confiança ${l.confianca}) — ${l.evidencia} — como cabe: ${l.como_cabe}`).join('\n')
+        : '',
+      textoLentes ? 'O QUE CADA UM DISSE:\n' + textoLentes : '',
+      movimento.length ? 'AS TESES:\n' + formatarMovimento(movimento) : '',
+      inv.leitura ? 'LEITURA DA INVESTIGAÇÃO: ' + inv.leitura : '',
+    ].filter(Boolean).join('\n\n'),
+    anteriores: await vereditosAnteriores(env),
+  });
+  if (erroDoParecer) console.log('parecer de coleção falhou:', erroDoParecer);
+
+  const sintese = parecer ? sinteseDoParecer(parecer) : await sintetizarParaOJoao(env, {
     tema,
     se_eu_fosse_voce: fecho.se_eu_fosse_voce,
     leituras: fecho.leituras,

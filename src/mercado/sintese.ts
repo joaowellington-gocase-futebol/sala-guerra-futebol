@@ -19,6 +19,7 @@
 import type { Env } from '../aiproxy';
 import { chamarAgente } from '../aiproxy';
 import { numerosDoTexto, type Leitura } from '../juiz';
+import type { Parecer } from './parecer';
 
 export interface Achamos {
   /** A ideia em uma frase, começando por "Achamos que". */
@@ -32,6 +33,22 @@ export interface Sintese {
   achamos: Achamos[];
   /** O pedido ao João reescrito curto. Vazio quando a mesa não precisa de nada. */
   pedido: string;
+  /**
+   * O parecer de coleção (29/09/2026). Quando vem, é ele que abre o card e a
+   * ata; os campos acima ficam preenchidos a partir dele pra quem só lê o
+   * formato antigo (a salinha, atas velhas, a prévia).
+   */
+  parecer?: Parecer;
+}
+
+/** A síntese tirada do parecer: o momento vira o feedback geral, os porquês viram os "achamos". */
+export function sinteseDoParecer(p: Parecer): Sintese {
+  return {
+    feedback_geral: p.momento || p.veredito,
+    achamos: p.porques.map((x) => ({ ideia: x.ideia, porque: x.porque })),
+    pedido: p.pedido,
+    parecer: p,
+  };
 }
 
 const MAX_ACHAMOS = 3;
