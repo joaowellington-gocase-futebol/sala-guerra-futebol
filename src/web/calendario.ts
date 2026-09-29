@@ -18,6 +18,16 @@ import { pegarJson } from './http';
 export const GE_CAMPEONATO = 'd1a37fa4-e948-43a6-ba53-ab24ab3a45b1';
 export const GE_FASE = 'fase-unica-campeonato-brasileiro-2026';
 
+/** Um campeonato no globoesporte: o id é o RESOURCE_ID da página de tabela do ge. */
+export interface Campeonato { id: string; fase: string; inicio: string; nome: string }
+
+export const SERIE_A: Campeonato = { id: GE_CAMPEONATO, fase: GE_FASE, inicio: '2026-03-29', nome: 'Série A' };
+// A Série B entrou em 29/09/2026 com a agenda de jogos: Ceará, Sport e
+// Fortaleza, licenciados da casa, jogam nela.
+export const SERIE_B: Campeonato = {
+  id: '009b5a68-dd09-46b8-95b3-293a2d494366', fase: 'brasileiro-serie-b-2026-fase-unica', inicio: '2026-03-20', nome: 'Série B',
+};
+
 export interface Jogo {
   rodada: number;
   data: string | null;
@@ -29,6 +39,7 @@ export interface Jogo {
   /** dias a partir de hoje; negativo = já foi */
   em_dias: number | null;
   classico: boolean;
+  campeonato?: string;
 }
 
 interface JogoBruto {
@@ -65,8 +76,8 @@ function diasAte(data: string | null): number | null {
   return Math.round((alvo - Date.now()) / 86400000);
 }
 
-async function buscarRodada(rodada: number): Promise<Jogo[]> {
-  const url = `https://api.globoesporte.globo.com/tabela/${GE_CAMPEONATO}/fase/${GE_FASE}/rodada/${rodada}/jogos/`;
+async function buscarRodada(rodada: number, camp: Campeonato = SERIE_A): Promise<Jogo[]> {
+  const url = `https://api.globoesporte.globo.com/tabela/${camp.id}/fase/${camp.fase}/rodada/${rodada}/jogos/`;
   const r = await pegarJson<JogoBruto[]>(url, 12000);
   if (!r.ok || !Array.isArray(r.dados)) return [];
   return r.dados.map((g) => {
@@ -84,6 +95,7 @@ async function buscarRodada(rodada: number): Promise<Jogo[]> {
       placar: casa != null && fora != null ? `${casa}-${fora}` : null,
       em_dias: diasAte(data),
       classico: ehClassico(mandante, visitante),
+      campeonato: camp.nome,
     } as Jogo;
   }).filter((j): j is Jogo => j !== null);
 }
@@ -113,15 +125,15 @@ export interface Calendario {
  * rodadas está atrasada (~7 dias por rodada) e salta pra lá. Até 3 tentativas,
  * o que cobre um erro inicial de umas 15 rodadas.
  */
-export async function buscarCalendario(janelaDias = 14): Promise<Calendario> {
-  const inicio = new Date('2026-03-29T00:00:00Z').getTime();
+export async function buscarCalendario(janelaDias = 14, camp: Campeonato = SERIE_A): Promise<Calendario> {
+  const inicio = new Date(`${camp.inicio}T00:00:00Z`).getTime();
   const semanas = Math.floor((Date.now() - inicio) / (7 * 86400000));
   let palpite = Math.min(38, Math.max(1, semanas + 1));
 
   const vistos = new Map<number, Jogo[]>();
   const buscarTrio = async (base: number) => {
     const alvos = [base, base + 1, base + 2].filter((r) => r >= 1 && r <= 38 && !vistos.has(r));
-    const listas = await Promise.all(alvos.map(buscarRodada));
+    const listas = await Promise.all(alvos.map((r) => buscarRodada(r, camp)));
     alvos.forEach((r, i) => vistos.set(r, listas[i]));
   };
 
@@ -137,6 +149,19 @@ export async function buscarCalendario(janelaDias = 14): Promise<Calendario> {
     const novo = Math.min(38, palpite + rodadasAtras + 1);
     if (novo === palpite) break;
     palpite = novo;
+  }
+
+  // A janela pode passar da última rodada buscada: com rodada no meio da
+  // semana, o trio pode terminar hoje e a rodada seguinte ficar de fora (foi o
+  // que aconteceu na Série B em 29/09/2026). Enquanto o jogo mais distante
+  // ainda cair dentro da janela, busca mais um trio adiante.
+  for (let extra = 0; extra < 2; extra++) {
+    const todos = [...vistos.values()].flat().filter((j) => j.em_dias !== null);
+    if (!todos.length) break;
+    const maisFuturo = Math.max(...todos.map((j) => j.em_dias as number));
+    const ultima = Math.max(...vistos.keys());
+    if (maisFuturo > janelaDias || ultima >= 38) break;
+    await buscarTrio(ultima + 1);
   }
 
   const jogos = [...vistos.values()].flat();

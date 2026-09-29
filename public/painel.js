@@ -659,6 +659,12 @@ $('btnConfig').onclick = async () => {
 
     <button class="acao secundaria" id="btnTestarVozao">Mandar um Vozão de teste agora</button>
 
+    <label>📅 Jogos no radar: clubes em foco (separados por vírgula)</label>
+    <input type="text" id="campoAgendaFoco" value="${esc(c.agenda_foco)}" placeholder="Flamengo" />
+    <label>📅 Quantos dias à frente</label>
+    <input type="number" id="campoAgendaDias" min="1" max="21" value="${esc(c.agenda_dias)}" />
+    <p class="fraco">Vai junto com a ata: todo jogo dos clubes em foco, todo jogo entre dois licenciados e clássico com licenciado — Série A e B. <a class="link-ata" href="/api/agenda" target="_blank" rel="noopener">ver a agenda de agora</a></p>
+
     <button class="acao" id="btnSalvarConfig">Salvar</button>
     <div id="statusConfig" class="fraco"></div>
   `);
@@ -676,6 +682,8 @@ $('btnConfig').onclick = async () => {
         vozao_ativo: $('campoVozao').checked,
         vozao_canal: $('campoCanal').value,
         vozao_chat_url: $('campoVozaoChat').value.trim(),
+        agenda_foco: $('campoAgendaFoco').value.trim(),
+        agenda_dias: Number($('campoAgendaDias').value) || 10,
       }),
     });
     const j = await r.json();

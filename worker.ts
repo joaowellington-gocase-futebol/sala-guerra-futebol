@@ -386,6 +386,16 @@ export default {
       // Prévia do PARECER DE COLEÇÃO (29/09/2026): coleta o mundo agora, roda o
       // comitê e a banca, e devolve o parecer e o card — sem gravar ata, sem
       // mexer em tese e sem mandar nada. É como calibrar o formato sem convocar.
+      // A agenda de jogos que vai junto com a ata, calculada agora. Sem IA.
+      if (p === '/api/agenda') {
+        const { montarAgenda, linhasDaAgenda } = await import('./src/agenda');
+        const { buscarTabela } = await import('./src/web/tabela');
+        const { SERIE_B } = await import('./src/web/calendario');
+        const [ta, tb] = await Promise.all([buscarTabela(), buscarTabela(SERIE_B)]);
+        const agenda = await montarAgenda(env, { 'Série A': ta, 'Série B': tb });
+        return json({ ...agenda, card: linhasDaAgenda(agenda).join('\n') });
+      }
+
       if (p === '/api/parecer/previa') {
         const { buscarMundo } = await import('./src/web/mundo');
         const { buscarVitrine } = await import('./src/web/vitrine');
@@ -396,17 +406,20 @@ export default {
         const [mundo, vitrine, tabela, direcao] = await Promise.all([buscarMundo(), buscarVitrine(), buscarTabela(), direcaoAberta(env)]);
         const mapa = montarMapaDeDemanda(vitrine, mundo);
         const pauta = (url.searchParams.get('pauta') || '').slice(0, 300) || direcao.tema?.texto || '';
+        const { montarAgenda, linhasDaAgenda, formatarAgenda } = await import('./src/agenda');
+        const { SERIE_B } = await import('./src/web/calendario');
+        const agenda = await montarAgenda(env, { 'Série A': tabela, 'Série B': await buscarTabela(SERIE_B) });
         const t0 = Date.now();
         const { parecer, erro } = await pm.emitirParecer(env, {
           pauta,
           direcao: pm.textoDaDirecao(direcao),
-          blocos: pm.blocosDoParecer({ mundo, mapa, tabela }),
+          blocos: [...pm.blocosDoParecer({ mundo, mapa, tabela }), formatarAgenda(agenda)],
           mesa: '',
           anteriores: await pm.vereditosAnteriores(env),
         });
         return json({
           ms: Date.now() - t0, erro: erro || null, parecer,
-          card: parecer ? pm.linhasDoCard(parecer).join('\n') : null,
+          card: parecer ? [...pm.linhasDoCard(parecer), '', ...linhasDaAgenda(agenda)].join('\n') : null,
           fontes_com_falha: [...mundo.falhas, ...vitrine.falhas, ...(tabela.ok ? [] : ['tabela: ' + tabela.erro])],
         }, parecer ? 200 : 502);
       }
@@ -440,6 +453,8 @@ export default {
           vozao_ativo: (await lerConfig(env, 'vozao_ativo')) === 'sim',
           vozao_canal: (await lerConfig(env, 'vozao_canal')) || 'chat',
           vozao_chat_url: await lerConfig(env, 'vozao_chat_url'),
+          agenda_foco: (await lerConfig(env, 'agenda_foco')) || 'Flamengo',
+          agenda_dias: Number(await lerConfig(env, 'agenda_dias')) || 10,
           // Secrets nunca voltam pra tela; o que a tela precisa saber é só se
           // existe um caminho de entrega configurado.
           temVozaoChatPorSecret: !!env.VOZAO_CHAT_URL,
@@ -453,8 +468,10 @@ export default {
         const b = (await request.json()) as {
           webhook_url?: string; auto_ativo?: boolean; tema_fixo?: string; boletim_ativo?: boolean;
           email_para?: string; email_de?: string; email_webhook?: string; vozao_ativo?: boolean;
-          vozao_canal?: string; vozao_chat_url?: string;
+          vozao_canal?: string; vozao_chat_url?: string; agenda_foco?: string; agenda_dias?: number;
         };
+        if (b.agenda_foco !== undefined) await gravarConfig(env, 'agenda_foco', String(b.agenda_foco).trim().slice(0, 200));
+        if (b.agenda_dias !== undefined) await gravarConfig(env, 'agenda_dias', String(Math.min(21, Math.max(1, Math.round(Number(b.agenda_dias) || 10)))));
         if (b.webhook_url !== undefined) {
           const u = String(b.webhook_url).trim();
           if (u && !/^https:\/\//i.test(u)) return json({ error: 'A URL do webhook precisa começar com https://' }, 400);

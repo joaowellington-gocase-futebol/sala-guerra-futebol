@@ -54,6 +54,8 @@ import { fecharComLeitura, leiturasAnteriores, type Leitura } from './mercado/le
 import { sintetizarParaOJoao, sinteseDoParecer, type Sintese } from './mercado/sintese';
 import { emitirParecer, blocosDoParecer, textoDaDirecao, vereditosAnteriores } from './mercado/parecer';
 import { buscarTabela } from './web/tabela';
+import { SERIE_B } from './web/calendario';
+import { montarAgenda, formatarAgenda } from './agenda';
 import { medirLeiturasAnteriores, formatarPlacar } from './placar';
 import {
   tesesVivas, podarTeses, movimentoDaRodada, formatarMovimento,
@@ -392,7 +394,12 @@ export async function rodarReuniao(
   // de falar no vácuo, que era a queixa do João em 16/09.
   // O mundo primeiro: ele traz o calendário, que o cardápio reaproveita em vez
   // de varrer o globoesporte de novo.
-  const [mundo, vitrine, tabela] = await Promise.all([buscarMundo(), buscarVitrine(), buscarTabela()]);
+  const [mundo, vitrine, tabela, tabelaB] = await Promise.all([
+    buscarMundo(), buscarVitrine(), buscarTabela(), buscarTabela(SERIE_B),
+  ]);
+  // A agenda de jogos da semana vai junto com a ata (pedido de 29/09/2026).
+  // Código puro, sem IA — ver src/agenda.ts.
+  const agenda = await montarAgenda(env, { 'Série A': tabela, 'Série B': tabelaB });
   const cardapio = montarCardapio(mundo, vitrine);
   // O mapa de demanda é o corte transversal dos catálogos: é ele que responde
   // "o que o público masculino tem procurado" em categoria e preço, que é o
@@ -737,7 +744,7 @@ export async function rodarReuniao(
   const { parecer, erro: erroDoParecer } = await emitirParecer(env, {
     pauta: tema,
     direcao: textoDaDirecao(direcao),
-    blocos: blocosDoParecer({ mundo, mapa, tabela }),
+    blocos: [...blocosDoParecer({ mundo, mapa, tabela }), formatarAgenda(agenda)],
     mesa: [
       fecho.leituras.length
         ? 'LEITURAS CONFERIDAS:\n' + fecho.leituras.map((l) =>
@@ -751,7 +758,7 @@ export async function rodarReuniao(
   });
   if (erroDoParecer) console.log('parecer de coleção falhou:', erroDoParecer);
 
-  const sintese = parecer ? sinteseDoParecer(parecer) : await sintetizarParaOJoao(env, {
+  const sinteseBase = parecer ? sinteseDoParecer(parecer) : await sintetizarParaOJoao(env, {
     tema,
     se_eu_fosse_voce: fecho.se_eu_fosse_voce,
     leituras: fecho.leituras,
@@ -762,6 +769,7 @@ export async function rodarReuniao(
     material: linhasDeMaterial.slice(0, 14),
     conferencia: achado + '\n' + formatarMapaDeDemanda(mapa) + '\n' + formatarProcura(mundo.procura),
   });
+  const sintese = { ...sinteseBase, agenda };
 
   // ── 7. A ROTINA — a Val cobra o que ficou parado ────────────────────────
   const produtor = acharAgente('produtor')!;

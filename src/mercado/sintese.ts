@@ -20,6 +20,7 @@ import type { Env } from '../aiproxy';
 import { chamarAgente } from '../aiproxy';
 import { numerosDoTexto, type Leitura } from '../juiz';
 import type { Parecer } from './parecer';
+import type { Agenda } from '../agenda';
 
 export interface Achamos {
   /** A ideia em uma frase, começando por "Achamos que". */
@@ -39,6 +40,8 @@ export interface Sintese {
    * formato antigo (a salinha, atas velhas, a prévia).
    */
   parecer?: Parecer;
+  /** Os jogos de licenciado da semana, que vão junto com a ata. */
+  agenda?: Agenda;
 }
 
 /** A síntese tirada do parecer: o momento vira o feedback geral, os porquês viram os "achamos". */

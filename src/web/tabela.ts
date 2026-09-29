@@ -10,7 +10,7 @@
 // são aritmética, e o modelo erra aritmética com convicção.
 
 import { pegarJson } from './http';
-import { GE_CAMPEONATO } from './calendario';
+import { SERIE_A, type Campeonato } from './calendario';
 
 export type Situacao =
   | 'lider' | 'briga_titulo' | 'vaga_libertadores' | 'meio' | 'risco_rebaixamento' | 'zona_rebaixamento';
@@ -81,8 +81,8 @@ export function classificar(linhas: Bruto['classificacao']): ClubeNaTabela[] {
   });
 }
 
-export async function buscarTabela(): Promise<Tabela> {
-  const url = `https://api.globoesporte.globo.com/tabela/${GE_CAMPEONATO}/classificacao/`;
+export async function buscarTabela(camp: Campeonato = SERIE_A): Promise<Tabela> {
+  const url = `https://api.globoesporte.globo.com/tabela/${camp.id}/classificacao/`;
   const r = await pegarJson<Bruto>(url, 12000);
   if (!r.ok || !r.dados?.classificacao?.length) {
     return { ok: false, campeonato: 'Brasileirão', fim: null, rodada: null, clubes: [], erro: r.erro || 'sem classificação' };

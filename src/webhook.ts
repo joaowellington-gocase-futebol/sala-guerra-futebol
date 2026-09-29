@@ -26,6 +26,7 @@
 import type { Env } from './aiproxy';
 import { lerConfig } from './db';
 import { linhasDoCard, type Parecer } from './mercado/parecer';
+import { linhasDaAgenda, type Agenda } from './agenda';
 
 export interface AtaParaWebhook {
   sessao: string;
@@ -50,7 +51,7 @@ export interface AtaParaWebhook {
   reprovadas: number;
   precisamos_de_voce: string;
   /** Feedback geral + "achamos que…". Quando vem preenchida, é só ela que entra no card. */
-  sintese?: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string; parecer?: Parecer };
+  sintese?: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string; parecer?: Parecer; agenda?: Agenda };
   url: string;        // a salinha, reencenando esta reunião
   urlAta: string;     // a ata completa desta reunião
 }
@@ -89,6 +90,12 @@ function corpoSintese(ata: AtaParaWebhook): unknown {
   if (s.pedido) {
     linhas.push('');
     linhas.push(`🙋 *Precisa de você:* ${s.pedido}`);
+  }
+
+  const agenda = linhasDaAgenda(s.agenda);
+  if (agenda.length) {
+    linhas.push('');
+    linhas.push(...agenda);
   }
 
   if (ata.entregas?.length) {

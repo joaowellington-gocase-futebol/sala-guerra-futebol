@@ -7,6 +7,7 @@
 // sustenta isso; por último a transcrição, pra quem quiser auditar.
 
 import { NOME_DO_FORMATO, type Parecer } from './mercado/parecer';
+import { quandoLegivel, type Agenda } from './agenda';
 import type { Env } from './aiproxy';
 import { AGENTES } from './agentes';
 import { PESSOAS } from './pessoas';
@@ -157,7 +158,7 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
   const reprovadas: { o_que: string; motivos: string[] }[] = jsonSeguro(ata.reprovadas);
   // A ata em forma de conversa (28/09/2026). Atas de antes não têm, e a página
   // cai no resumo curto de sempre.
-  const sintese: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string; parecer?: Parecer } | null =
+  const sintese: { feedback_geral: string; achamos: { ideia: string; porque: string }[]; pedido: string; parecer?: Parecer; agenda?: Agenda } | null =
     jsonSeguro(ata.sintese, null);
 
   // O pedido original de cada entrega, pra página mostrar o que foi pedido ao
@@ -184,6 +185,10 @@ export async function renderizarPaginaAta(env: Env, origem: string, sessaoPedida
     ${sintese.feedback_geral ? `<b>Feedback geral:</b> ${esc(sintese.feedback_geral)}` : ''}
     ${(sintese.achamos || []).map((x) => `<div class="achamos">💡 <b>${esc(x.ideia)}</b> — ${esc(x.porque)}</div>`).join('')}
   </div>` : ata.resumo_curto ? `<div class="chamada"><b>${esc(ata.resumo_curto)}</b></div>` : ''}
+
+  ${sintese?.agenda && (sintese.agenda.jogos?.length || sintese.agenda.outros?.length) ? `<h2>📅 Jogos no radar — próximos ${sintese.agenda.dias} dias</h2>
+  ${sintese.agenda.jogos.map((j) => `<div class="sinal"><b>${esc(quandoLegivel(j))}</b> — ${esc(j.mandante)} x ${esc(j.visitante)} <span class="base">(${esc([j.campeonato, ...j.motivos, j.contexto].filter(Boolean).join(' · '))})</span></div>`).join('')}
+  ${(sintese.agenda.outros || []).length ? `<div class="sinal base">Também jogam: ${esc((sintese.agenda.outros || []).map((j) => `${j.mandante} x ${j.visitante} (${quandoLegivel(j)}, ${j.campeonato})`).join(' · '))}</div>` : ''}` : ''}
 
   <h2>🧭 O que o mercado está pedindo</h2>
   ${leituras.length ? leituras.map((l) => `
